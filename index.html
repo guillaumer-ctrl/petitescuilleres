@@ -205,7 +205,6 @@
 const state = {
   planningId: null,
   role: null, // 'edit' | 'view'
-  babyName: null,
   tab: 'planning',
   showModal: false,
   showCreate: false,
@@ -397,12 +396,16 @@ async function saveLocal(){
 async function switchPlanning(planningId, role){
   state.planningId = planningId;
   state.role = role;
+  state.tab = 'planning';
   await refreshPlanning();
   await saveLocal();
   render();
 }
 
 async function forgetPlanning(planningId){
+  if(auth.currentUser){
+    await revokeAccess(planningId, auth.currentUser.uid);
+  }
   state.knownPlannings = state.knownPlannings.filter(p => p.planningId !== planningId);
   await storageAPI.set('my-plannings', JSON.stringify(state.knownPlannings), false);
   if(state.planningId === planningId){
@@ -482,7 +485,7 @@ async function saveUserProfile(fields){
 // Rend le compte connecté membre de ce planning (utilisé à sa création).
 async function ensureMembership(planningId, role, identifier){
   if(!auth.currentUser || !planningId || !role) return;
-  const norm = normalizeIdentifier(identifier || auth.currentUser.email || '');
+  const norm = normalizeIdentifier(identifier || '');
   const pseudo = (state.userProfile && state.userProfile.pseudo) || '';
   try{
     await db.collection('memberships').doc(auth.currentUser.uid).collection('plannings').doc(planningId).set({
@@ -497,11 +500,19 @@ async function ensureMembership(planningId, role, identifier){
 // Enregistre le pseudo choisi à l'inscription, puis reprend le fil normal
 // (chargement des accès) — et met à jour l'affichage de ce compte sur les
 // plannings auxquels il a déjà accès.
+let pendingBabyData = null; // { babyName, birthdate, gender, photo } en attente de la saisie du pseudo
+
 async function submitPseudo(pseudo){
   await saveUserProfile({ pseudo });
   state.needsPseudo = false;
   await loadUserProfile();
-  await loadLocal();
+  if(pendingBabyData){
+    const data = pendingBabyData;
+    pendingBabyData = null;
+    await createPlanning(data.babyName, data.birthdate, data.gender, data.photo);
+  } else {
+    await loadLocal();
+  }
   for(const p of state.knownPlannings){
     try{
       await db.collection('planningMembers').doc(p.planningId).collection('members').doc(auth.currentUser.uid).set({ pseudo }, { merge: true });
@@ -656,7 +667,7 @@ async function signInWithGoogle(){
   state.authBusy = true; render();
   try{
     const result = await auth.signInWithPopup(new firebase.auth.GoogleAuthProvider());
-    if(result && result.user && result.user.email && result.additionalUserInfo && result.additionalUserInfo.isNewUser){
+    if(result && result.user && result.user.email){
       pendingSignupIdentifier = { identifier: result.user.email, method: 'google' };
     }
   }catch(e){
@@ -671,12 +682,26 @@ async function sendPasswordReset(email){
   try{
     await auth.sendPasswordResetEmail(email);
     state.authError = null;
+    render();
     alert("Email de réinitialisation envoyé si un compte existe avec cette adresse.");
   }catch(e){ state.authError = authErrorMessage(e); render(); }
 }
 
 async function logOut(){
   await auth.signOut();
+  state.tab = 'planning';
+  state.showCreate = false;
+  state.needsPseudo = false;
+  state.authScreen = 'landing';
+  state.authMethod = 'email';
+  state.grantError = null;
+  state.grantSuccessMessage = null;
+  state.inviteRole = 'view';
+  createGender = null;
+  createPhoto = null;
+  pendingBabyData = null;
+  planningMembers = [];
+  planningMembersForId = null;
 }
 
 async function createPlanning(babyName, birthdate, gender, photo){
@@ -690,6 +715,7 @@ async function createPlanning(babyName, birthdate, gender, photo){
     state.role = 'edit';
     await saveLocal();
     createPhoto = null;
+    createGender = null;
     render();
   }catch(e){
     console.error('Erreur création du planning', e);
@@ -881,9 +907,9 @@ function attachAuthEvents(){
   if(backBtn) backBtn.onclick = () => { if(state.authBusy) return; state.authScreen = 'landing'; state.authError = null; render(); };
 
   const methodEmailBtn = document.getElementById('auth-method-email');
-  if(methodEmailBtn) methodEmailBtn.onclick = () => { state.authMethod = 'email'; state.authError = null; render(); };
+  if(methodEmailBtn) methodEmailBtn.onclick = () => switchAuthMethod('email');
   const methodPhoneBtn = document.getElementById('auth-method-phone');
-  if(methodPhoneBtn) methodPhoneBtn.onclick = () => { state.authMethod = 'phone'; state.authError = null; render(); };
+  if(methodPhoneBtn) methodPhoneBtn.onclick = () => switchAuthMethod('phone');
 
   const togglePasswordBtn = document.getElementById('toggle-password-btn');
   if(togglePasswordBtn) togglePasswordBtn.onclick = () => {
@@ -912,15 +938,30 @@ function attachAuthEvents(){
   if(googleBtn) googleBtn.onclick = () => signInWithGoogle();
   const toggleBtn = document.getElementById('toggle-auth-mode-btn');
   if(toggleBtn) toggleBtn.onclick = () => {
+    const savedId = document.getElementById('auth-identifier-input').value;
+    const savedPw = document.getElementById('auth-password-input').value;
     state.authScreen = state.authScreen === 'signup' ? 'login' : 'signup';
     state.authError = null;
     render();
+    const newId = document.getElementById('auth-identifier-input');
+    const newPw = document.getElementById('auth-password-input');
+    if(newId) newId.value = savedId;
+    if(newPw) newPw.value = savedPw;
   };
   const forgotBtn = document.getElementById('forgot-password-btn');
   if(forgotBtn) forgotBtn.onclick = () => {
     const email = document.getElementById('auth-identifier-input').value.trim();
     sendPasswordReset(email);
   };
+}
+
+function switchAuthMethod(method){
+  const savedPw = document.getElementById('auth-password-input').value;
+  state.authMethod = method;
+  state.authError = null;
+  render();
+  const newPw = document.getElementById('auth-password-input');
+  if(newPw) newPw.value = savedPw;
 }
 
 function renderWelcome(){
@@ -1106,7 +1147,7 @@ function renderBabySwitcherModal(){
           <h2 style="font-size:30px;">Mes bébés</h2>
           <button id="close-baby-switcher" style="background:none;border:none;font-size:18px;color:var(--text-secondary);">✕</button>
         </div>
-        ${rows || `<p style="color:var(--text-muted);font-size:16px;">Aucun autre bébé enregistré sur cet appareil.</p>`}
+        ${rows || `<p style="color:var(--text-muted);font-size:16px;">Aucun autre bébé accessible avec ce compte.</p>`}
         <button class="btn btn-secondary" id="add-baby-btn" style="margin-top:1rem;">+ Ajouter un autre bébé</button>
       </div>
     </div>
@@ -1270,7 +1311,7 @@ function renderProfilTab(){
     <div class="card" style="margin-top:1.75rem;display:flex;justify-content:space-between;align-items:center;gap:10px;">
       <div style="min-width:0;">
         <div style="font-size:16px;color:var(--text-secondary);margin-bottom:4px;">Connecté avec</div>
-        <div style="font-size:15px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${(state.userProfile && (state.userProfile.phone || state.userProfile.email)) || (state.user && state.user.email) || 'Compte connecté'}</div>
+        <div style="font-size:15px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${(state.userProfile && (state.userProfile.phone || state.userProfile.email)) || 'Compte connecté'}</div>
       </div>
       <button class="btn btn-secondary" id="logout-btn" style="width:auto;height:38px;padding:0 14px;font-size:15px;flex-shrink:0;">Déconnexion</button>
     </div>
@@ -1495,6 +1536,12 @@ function attachWelcomeEvents(){
       document.getElementById('birthdate-range-error').style.display = (birthdate && !ageValid) ? 'block' : 'none';
       document.getElementById('gender-error').style.display = createGender ? 'none' : 'block';
       if(!val || !birthdate || !ageValid || !createGender) return;
+      if(!state.userProfile || !state.userProfile.pseudo){
+        pendingBabyData = { babyName: val, birthdate, gender: createGender, photo: createPhoto };
+        state.needsPseudo = true;
+        render();
+        return;
+      }
       await createPlanning(val, birthdate, createGender, createPhoto);
     };
   }
@@ -1531,7 +1578,7 @@ function attachMainEvents(){
 
     document.querySelectorAll('[data-forgetid]').forEach(btn => {
       btn.onclick = async () => {
-        if(!confirm('Oublier ce bébé sur cet appareil ? Les données restent en ligne : tu pourras les retrouver avec un code d\'invitation.')) return;
+        if(!confirm("Retirer l'accès à ce bébé pour ton compte ? Un administrateur devra te redonner accès si tu changes d'avis.")) return;
         await forgetPlanning(btn.dataset.forgetid);
       };
     });
@@ -1728,6 +1775,7 @@ function attachMainEvents(){
     const deleteBtn = document.getElementById('delete-meal');
     if(deleteBtn){
       deleteBtn.onclick = async () => {
+        if(!confirm('Supprimer ce repas ?')) return;
         planningData.meals = planningData.meals.filter(m => m.id !== editingMealId);
         await savePlanning();
         state.showModal = false;
@@ -1839,12 +1887,6 @@ auth.onAuthStateChanged(async (user) => {
       await consumePendingInvites(identifier);
     }
     await loadUserProfile();
-    if(!state.userProfile || !state.userProfile.pseudo){
-      state.needsPseudo = true;
-      state.loading = false;
-      render();
-      return;
-    }
     await loadLocal();
   } else {
     state.userProfile = null;
