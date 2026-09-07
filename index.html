@@ -219,6 +219,7 @@ const state = {
   authScreen: 'landing', // 'landing' | 'login' | 'signup'
   authMethod: 'email', // 'email' | 'phone'
   needsPseudo: false,
+  editingPseudo: false,
   userProfile: null,
   inviteRole: 'view', // 'edit' | 'view' — rôle sélectionné pour donner un accès
   grantError: null,
@@ -497,27 +498,24 @@ async function ensureMembership(planningId, role, identifier){
   }catch(e){ console.error('Erreur création accès', e); }
 }
 
-// Enregistre le pseudo choisi à l'inscription, puis reprend le fil normal
-// (chargement des accès) — et met à jour l'affichage de ce compte sur les
-// plannings auxquels il a déjà accès.
-let pendingBabyData = null; // { babyName, birthdate, gender, photo } en attente de la saisie du pseudo
-
-async function submitPseudo(pseudo){
-  await saveUserProfile({ pseudo });
-  state.needsPseudo = false;
-  await loadUserProfile();
-  if(pendingBabyData){
-    const data = pendingBabyData;
-    pendingBabyData = null;
-    await createPlanning(data.babyName, data.birthdate, data.gender, data.photo);
-  } else {
-    await loadLocal();
-  }
+// Met à jour le pseudo affiché de ce compte sur tous les plannings auxquels
+// il a accès (utilisé après la saisie initiale, ou après une modification
+// depuis l'onglet Partage).
+async function updatePseudoEverywhere(pseudo){
   for(const p of state.knownPlannings){
     try{
       await db.collection('planningMembers').doc(p.planningId).collection('members').doc(auth.currentUser.uid).set({ pseudo }, { merge: true });
     }catch(e){}
   }
+}
+
+// Enregistre le pseudo choisi à l'inscription, puis reprend le fil normal.
+async function submitPseudo(pseudo){
+  await saveUserProfile({ pseudo });
+  state.needsPseudo = false;
+  await loadUserProfile();
+  await loadLocal();
+  await updatePseudoEverywhere(pseudo);
 }
 
 // Donne accès à ce planning à la personne identifiée par cet email ou ce
@@ -699,7 +697,6 @@ async function logOut(){
   state.inviteRole = 'view';
   createGender = null;
   createPhoto = null;
-  pendingBabyData = null;
   planningMembers = [];
   planningMembersForId = null;
 }
@@ -764,7 +761,7 @@ function renderPseudoStep(){
   return `
     <div style="min-height:100vh;min-height:100dvh;display:flex;flex-direction:column;padding:2.5rem 1.5rem 2rem;">
       <div style="width:140px;color:var(--primary);margin:0 auto 2rem;">${ICON_LOGO_WORDMARK}</div>
-      <div class="title-font" style="font-size:22px;color:var(--text);margin-bottom:8px;text-align:center;">Comment veux-tu qu'on t'appelle ?</div>
+      <div class="title-font" style="font-size:30px;color:var(--text);margin-bottom:8px;text-align:center;">Comment veux-tu qu'on t'appelle ?</div>
       <p style="font-size:16px;color:var(--text-secondary);text-align:center;margin:0 0 1.75rem;">Ce nom sera visible par les autres personnes qui partagent un planning avec toi.</p>
       <div class="field">
         <label>Prénom ou pseudo</label>
@@ -855,7 +852,7 @@ function renderAuthForm(isSignup){
     <div style="min-height:100vh;min-height:100dvh;display:flex;flex-direction:column;padding:2rem 1.5rem 2rem;">
       <button id="auth-back-btn" aria-label="Retour" ${state.authBusy ? 'disabled style="opacity:0.3;background:none;border:none;padding:8px;margin:-8px -8px 0.5rem;align-self:flex-start;color:var(--text);"' : 'style="background:none;border:none;padding:8px;margin:-8px -8px 0.5rem;align-self:flex-start;color:var(--text);cursor:pointer;"'}>${ICON_BACK}</button>
       <div style="width:120px;color:var(--primary);margin:0 auto 1.5rem;">${ICON_LOGO_WORDMARK}</div>
-      <div class="title-font" style="font-size:22px;color:var(--text);margin-bottom:1.25rem;text-align:center;">${isSignup ? 'Créer un compte' : 'Se connecter'}</div>
+      <div class="title-font" style="font-size:30px;color:var(--text);margin-bottom:1.25rem;text-align:center;">${isSignup ? 'Créer un compte' : 'Se connecter'}</div>
 
       <div style="display:flex;gap:8px;margin-bottom:1.25rem;">
         <button class="btn ${!isPhone ? 'btn-primary' : 'btn-secondary'}" id="auth-method-email" style="height:38px;font-size:15px;${!isPhone ? 'color:#FFFFFF;' : ''}">Email</button>
@@ -976,7 +973,7 @@ function renderWelcomeReturning(){
   return `
     <div style="min-height:100vh;min-height:100dvh;display:flex;flex-direction:column;padding:2.5rem 1.5rem 2rem;">
       <div style="width:100px;color:var(--primary);margin:0 auto 2rem;">${ICON_LOGO_WORDMARK}</div>
-      <div class="title-font" style="font-size:22px;color:var(--text);margin-bottom:14px;">Tes bébés</div>
+      <div class="title-font" style="font-size:30px;color:var(--text);margin-bottom:14px;">Tes bébés</div>
       <div style="width:100%;">
         ${state.knownPlannings.map(p => {
           const avatarStyle = p.photo ? `background-image:url('${p.photo}');background-size:cover;background-position:center;` : 'background:var(--accent-light);';
@@ -1374,8 +1371,20 @@ async function loadPlanningMembersIfNeeded(){
 }
 
 function renderPartageTab(){
+  const myPseudo = (state.userProfile && state.userProfile.pseudo) || '';
+  const pseudoSection = `
+    <div class="card" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.5rem;">
+      <div style="min-width:0;">
+        <div style="font-size:16px;color:var(--text-secondary);margin-bottom:4px;">Ton nom affiché</div>
+        <div style="font-size:16px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${myPseudo || '—'}</div>
+      </div>
+      <button class="edit-field-btn" id="edit-pseudo-btn" aria-label="Modifier ton nom">${ICON_EDIT}</button>
+    </div>
+    ${state.editingPseudo ? renderPseudoEditModal() : ''}
+  `;
+
   if(state.role !== 'edit'){
-    return `<p style="text-align:center;color:var(--text-muted);font-size:16px;margin-top:2rem;">Seul un administrateur peut gérer les accès de ce planning.</p>`;
+    return pseudoSection + `<p style="text-align:center;color:var(--text-muted);font-size:16px;margin-top:2rem;">Seul un administrateur peut gérer les accès de ce planning.</p>`;
   }
   const myUid = auth.currentUser && auth.currentUser.uid;
   const membersHtml = planningMembersForId === state.planningId
@@ -1390,7 +1399,7 @@ function renderPartageTab(){
       `).join('') : `<p style="color:var(--text-muted);font-size:15px;">Personne d'autre pour l'instant.</p>`)
     : `<p style="color:var(--text-muted);font-size:15px;">Chargement...</p>`;
 
-  return `
+  return pseudoSection + `
     <p style="font-size:16px;color:var(--text-secondary);margin:0 0 1.25rem;">Donne accès à quelqu'un via son email ou son numéro de téléphone. Si elle n'a pas encore de compte, l'accès sera donné automatiquement dès son inscription.</p>
 
     <div class="card">
@@ -1409,6 +1418,26 @@ function renderPartageTab(){
 
     <label style="display:block;margin:1.5rem 0 10px;">Personnes ayant accès</label>
     ${membersHtml}
+  `;
+}
+
+function renderPseudoEditModal(){
+  const current = (state.userProfile && state.userProfile.pseudo) || '';
+  return `
+    <div class="modal-overlay" id="pseudo-edit-overlay">
+      <div class="modal-sheet">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
+          <h2 style="font-size:30px;">Modifier</h2>
+          <button id="close-pseudo-edit" style="background:none;border:none;font-size:18px;color:var(--text-secondary);">✕</button>
+        </div>
+        <div class="field">
+          <label>Ton nom affiché</label>
+          <input type="text" id="edit-pseudo-input" value="${current}" placeholder="Ex : Maman, Léo, Mamie..." />
+          <p class="error-text" id="edit-pseudo-error" style="display:none;">Indique un nom</p>
+        </div>
+        <button class="btn btn-primary" id="save-pseudo-btn" style="margin-top:0.5rem;">Enregistrer</button>
+      </div>
+    </div>
   `;
 }
 
@@ -1536,12 +1565,6 @@ function attachWelcomeEvents(){
       document.getElementById('birthdate-range-error').style.display = (birthdate && !ageValid) ? 'block' : 'none';
       document.getElementById('gender-error').style.display = createGender ? 'none' : 'block';
       if(!val || !birthdate || !ageValid || !createGender) return;
-      if(!state.userProfile || !state.userProfile.pseudo){
-        pendingBabyData = { babyName: val, birthdate, gender: createGender, photo: createPhoto };
-        state.needsPseudo = true;
-        render();
-        return;
-      }
       await createPlanning(val, birthdate, createGender, createPhoto);
     };
   }
@@ -1683,6 +1706,29 @@ function attachMainEvents(){
       document.getElementById('heure-input').value = now.toTimeString().slice(0,5);
     }, 0);
   };
+
+  const editPseudoBtn = document.getElementById('edit-pseudo-btn');
+  if(editPseudoBtn) editPseudoBtn.onclick = () => { state.editingPseudo = true; render(); };
+
+  const pseudoEditOverlay = document.getElementById('pseudo-edit-overlay');
+  if(pseudoEditOverlay){
+    pseudoEditOverlay.onclick = (e) => { if(e.target.id === 'pseudo-edit-overlay'){ state.editingPseudo = false; render(); } };
+    const closePseudoEdit = document.getElementById('close-pseudo-edit');
+    if(closePseudoEdit) closePseudoEdit.onclick = () => { state.editingPseudo = false; render(); };
+
+    const savePseudoBtn = document.getElementById('save-pseudo-btn');
+    if(savePseudoBtn) savePseudoBtn.onclick = async () => {
+      const val = document.getElementById('edit-pseudo-input').value.trim();
+      if(!val){ document.getElementById('edit-pseudo-error').style.display = 'block'; return; }
+      await saveUserProfile({ pseudo: val });
+      await loadUserProfile();
+      await updatePseudoEverywhere(val);
+      state.editingPseudo = false;
+      planningMembersForId = null;
+      render();
+      await loadPlanningMembersIfNeeded();
+    };
+  }
 
   document.querySelectorAll('[data-inviterole]').forEach(btn => {
     btn.onclick = () => { state.inviteRole = btn.dataset.inviterole; render(); };
@@ -1887,6 +1933,12 @@ auth.onAuthStateChanged(async (user) => {
       await consumePendingInvites(identifier);
     }
     await loadUserProfile();
+    if(!state.userProfile || !state.userProfile.pseudo){
+      state.needsPseudo = true;
+      state.loading = false;
+      render();
+      return;
+    }
     await loadLocal();
   } else {
     state.userProfile = null;
