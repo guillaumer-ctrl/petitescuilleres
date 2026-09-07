@@ -902,7 +902,7 @@ function renderCreateForm(){
   return `
     <div class="top-header" style="justify-content:center;padding-top:2rem;">
       <div style="display:flex;flex-direction:column;align-items:center;">
-        <button id="create-photo-btn" class="avatar" aria-label="Ajouter une photo de bébé" style="width:170px;height:170px;font-size:64px;border:none;cursor:pointer;overflow:hidden;display:flex;align-items:center;justify-content:center;color:var(--accent);${photoStyle || 'background:var(--accent-light);'}">${createPhoto ? '' : ICON_BABY_SILHOUETTE}</button>
+        <button id="create-photo-btn" class="avatar" aria-label="Ajouter une photo de bébé" style="width:130px;height:130px;font-size:52px;border:none;cursor:pointer;overflow:hidden;display:flex;align-items:center;justify-content:center;color:var(--accent);${photoStyle || 'background:var(--accent-light);'}">${createPhoto ? '' : ICON_BABY_SILHOUETTE}</button>
         <input type="file" id="create-photo-input" accept="image/*" style="display:none;" />
         <div style="font-size:14px;color:var(--text-muted);margin-top:8px;">Touche pour ajouter une photo</div>
       </div>
