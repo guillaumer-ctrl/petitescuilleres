@@ -222,6 +222,7 @@ const state = {
   userProfile: null,
   inviteRole: 'view', // 'edit' | 'view' — rôle sélectionné pour donner un accès
   grantError: null,
+  grantSuccessMessage: null,
   grantBusy: false,
   authError: null,
   authBusy: false
@@ -476,7 +477,12 @@ async function grantAccess(planningId, identifier, role){
   try{
     const lookup = await db.collection('userLookup').doc(norm).get();
     if(!lookup.exists){
-      return { ok: false, error: "Cette personne n'a pas encore de compte. Elle doit d'abord en créer un avec cet email ou ce numéro, puis réessaie." };
+      // Personne n'a encore de compte avec cet identifiant : on enregistre
+      // une invitation en attente, appliquée automatiquement dès son inscription.
+      await db.collection('pendingInvites').doc(norm).collection('invites').doc(planningId).set({
+        role, updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+      return { ok: true, pending: true };
     }
     const targetUid = lookup.data().uid;
     await db.collection('memberships').doc(targetUid).collection('plannings').doc(planningId).set({
@@ -485,11 +491,32 @@ async function grantAccess(planningId, identifier, role){
     await db.collection('planningMembers').doc(planningId).collection('members').doc(targetUid).set({
       role, identifier: norm, updatedAt: firebase.firestore.FieldValue.serverTimestamp()
     });
-    return { ok: true };
+    return { ok: true, pending: false };
   }catch(e){
     console.error('Erreur attribution accès', e);
     return { ok: false, error: "Une erreur est survenue, réessaie." };
   }
+}
+
+// Applique les invitations en attente correspondant à cet email ou ce
+// numéro — appelé juste après la création d'un compte.
+async function consumePendingInvites(identifier){
+  const norm = normalizeIdentifier(identifier);
+  if(!norm || !auth.currentUser) return;
+  try{
+    const snap = await db.collection('pendingInvites').doc(norm).collection('invites').get();
+    for(const doc of snap.docs){
+      const planningId = doc.id;
+      const role = doc.data().role;
+      await db.collection('memberships').doc(auth.currentUser.uid).collection('plannings').doc(planningId).set({
+        role, planningId, updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+      await db.collection('planningMembers').doc(planningId).collection('members').doc(auth.currentUser.uid).set({
+        role, identifier: norm, updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+      await doc.ref.delete();
+    }
+  }catch(e){ console.error('Erreur consommation invitations', e); }
 }
 
 async function revokeAccess(planningId, uid){
@@ -556,14 +583,13 @@ function authErrorMessage(e, context){
   return "Une erreur est survenue, réessaie.";
 }
 
+let pendingSignupIdentifier = null; // {identifier, method} en attente d'enregistrement après création du compte
+
 async function signUpWithEmail(email, password){
   state.authBusy = true; state.authError = null; render();
-  try{
-    await auth.createUserWithEmailAndPassword(email, password);
-    await registerUserLookup(email);
-    await saveUserProfile({ email, method: 'email' });
-  }
-  catch(e){ state.authError = authErrorMessage(e, 'email'); state.authBusy = false; render(); }
+  pendingSignupIdentifier = { identifier: email, method: 'email' };
+  try{ await auth.createUserWithEmailAndPassword(email, password); }
+  catch(e){ pendingSignupIdentifier = null; state.authError = authErrorMessage(e, 'email'); state.authBusy = false; render(); }
 }
 
 async function logInWithEmail(email, password){
@@ -574,12 +600,9 @@ async function logInWithEmail(email, password){
 
 async function signUpWithPhone(phone, password){
   state.authBusy = true; state.authError = null; render();
-  try{
-    await auth.createUserWithEmailAndPassword(phoneToSyntheticEmail(phone), password);
-    await registerUserLookup(phone);
-    await saveUserProfile({ phone, method: 'phone' });
-  }
-  catch(e){ state.authError = authErrorMessage(e, 'phone'); state.authBusy = false; render(); }
+  pendingSignupIdentifier = { identifier: phone, method: 'phone' };
+  try{ await auth.createUserWithEmailAndPassword(phoneToSyntheticEmail(phone), password); }
+  catch(e){ pendingSignupIdentifier = null; state.authError = authErrorMessage(e, 'phone'); state.authBusy = false; render(); }
 }
 
 async function logInWithPhone(phone, password){
@@ -593,9 +616,8 @@ async function signInWithGoogle(){
   state.authBusy = true; render();
   try{
     const result = await auth.signInWithPopup(new firebase.auth.GoogleAuthProvider());
-    if(result && result.user && result.user.email){
-      await registerUserLookup(result.user.email);
-      await saveUserProfile({ email: result.user.email, method: 'google' });
+    if(result && result.user && result.user.email && result.additionalUserInfo && result.additionalUserInfo.isNewUser){
+      pendingSignupIdentifier = { identifier: result.user.email, method: 'google' };
     }
   }catch(e){
     state.authError = authErrorMessage(e, 'email');
@@ -1254,7 +1276,7 @@ function renderPartageTab(){
     : `<p style="color:var(--text-muted);font-size:15px;">Chargement...</p>`;
 
   return `
-    <p style="font-size:16px;color:var(--text-secondary);margin:0 0 1.25rem;">Donne accès à quelqu'un via son email ou son numéro de téléphone (il doit déjà avoir un compte).</p>
+    <p style="font-size:16px;color:var(--text-secondary);margin:0 0 1.25rem;">Donne accès à quelqu'un via son email ou son numéro de téléphone. Si elle n'a pas encore de compte, l'accès sera donné automatiquement dès son inscription.</p>
 
     <div class="card">
       <label style="display:block;margin-bottom:10px;">Donner un accès</label>
@@ -1266,6 +1288,7 @@ function renderPartageTab(){
 
       <input type="text" id="grant-identifier-input" placeholder="Email ou numéro de téléphone" style="margin-bottom:10px;" autocapitalize="none" />
       ${state.grantError ? `<p class="error-text" style="margin-bottom:10px;">${state.grantError}</p>` : ''}
+      ${state.grantSuccessMessage ? `<p style="color:var(--success-text);background:var(--success-bg);border-radius:12px;padding:10px 14px;font-size:15px;margin-bottom:10px;">${state.grantSuccessMessage}</p>` : ''}
       <button class="btn btn-primary" id="grant-access-btn" style="color:#FFFFFF;" ${state.grantBusy ? 'disabled' : ''}>${state.grantBusy ? 'Envoi en cours...' : "Donner l'accès"}</button>
     </div>
 
@@ -1518,12 +1541,15 @@ function attachMainEvents(){
   if(grantBtn) grantBtn.onclick = async () => {
     const input = document.getElementById('grant-identifier-input');
     const identifier = input ? input.value.trim() : '';
-    state.grantBusy = true; state.grantError = null; render();
+    state.grantBusy = true; state.grantError = null; state.grantSuccessMessage = null; render();
     const result = await grantAccess(state.planningId, identifier, state.inviteRole);
     state.grantBusy = false;
     if(!result.ok){ state.grantError = result.error; render(); return; }
     state.grantError = null;
-    planningMembersForId = null;
+    state.grantSuccessMessage = result.pending
+      ? "Invitation enregistrée : l'accès sera donné automatiquement dès la création du compte avec cet email/numéro."
+      : "Accès donné !";
+    if(!result.pending){ planningMembersForId = null; }
     render();
     await loadPlanningMembersIfNeeded();
   };
@@ -1701,6 +1727,13 @@ auth.onAuthStateChanged(async (user) => {
   state.authLoading = false;
   if(user){
     state.authBusy = false;
+    if(pendingSignupIdentifier){
+      const { identifier, method } = pendingSignupIdentifier;
+      pendingSignupIdentifier = null;
+      await registerUserLookup(identifier);
+      await saveUserProfile(method === 'phone' ? { phone: identifier, method } : { email: identifier, method });
+      await consumePendingInvites(identifier);
+    }
     await loadUserProfile();
     await loadLocal();
   } else {
