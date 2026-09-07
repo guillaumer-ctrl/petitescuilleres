@@ -462,9 +462,11 @@ function authErrorMessage(e){
     'auth/too-many-requests': 'Trop de tentatives, réessaie dans quelques minutes.',
     'auth/unauthorized-domain': "Ce site n'est pas encore autorisé pour la connexion Google (Firebase Console > Authentication > Settings > Authorized domains).",
     'auth/operation-not-allowed': "La connexion Google n'est pas activée sur ce projet (Firebase Console > Authentication > Sign-in method).",
-    'auth/network-request-failed': 'Problème de connexion internet, réessaie.'
+    'auth/network-request-failed': 'Problème de connexion internet, réessaie.',
+    'auth/popup-blocked': "Le navigateur a bloqué la fenêtre de connexion Google. Autorise les popups pour ce site et réessaie."
   };
-  if(e && e.code === 'auth/popup-closed-by-user') return null;
+  const silent = ['auth/popup-closed-by-user', 'auth/cancelled-popup-request'];
+  if(e && silent.includes(e.code)) return null;
   console.error('Erreur auth', e);
   if(e && map[e.code]) return map[e.code];
   if(e && e.code) return `Une erreur est survenue (${e.code}). Réessaie.`;
@@ -485,8 +487,14 @@ async function logInWithEmail(email, password){
 
 async function signInWithGoogle(){
   state.authError = null;
-  try{ await auth.signInWithRedirect(new firebase.auth.GoogleAuthProvider()); }
-  catch(e){ state.authError = authErrorMessage(e); render(); }
+  state.authBusy = true; render();
+  try{
+    await auth.signInWithPopup(new firebase.auth.GoogleAuthProvider());
+  }catch(e){
+    state.authError = authErrorMessage(e);
+  }
+  state.authBusy = false;
+  render();
 }
 
 async function sendPasswordReset(email){
