@@ -89,6 +89,7 @@
   .btn-primary{ background:var(--accent); color:#FFFFFF; }
   .btn-secondary{ background:var(--card); color:var(--text); border:1.5px solid var(--border); }
   .btn-outline{ background:transparent; color:var(--primary); border:1.5px solid var(--primary); }
+  .btn-ghost{ background:transparent; color:var(--text-secondary); border:none; text-decoration:underline; height:auto; padding:8px; }
   .baby-list-item{
     width:100%; display:flex; align-items:center; gap:12px;
     background:var(--card); border:1.5px solid var(--border); border-radius:16px;
@@ -104,6 +105,16 @@
     background:var(--card);
   }
   textarea{ height:auto; border-radius:24px; padding:14px 18px; }
+  input[type="date"]::-webkit-calendar-picker-indicator{
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='20' height='20' fill='none' stroke='%23C6C5DA' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: center;
+    width: 20px;
+    height: 20px;
+    margin-right: 2px;
+    cursor: pointer;
+    opacity: 1;
+  }
   label{ color:var(--text-secondary); display:block; margin-bottom:6px; }
   .field{ margin-bottom:14px; }
 
@@ -189,6 +200,7 @@
 <!-- SDK Firebase (base de données) -->
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
 <script>
 const state = {
   planningId: null,
@@ -204,7 +216,12 @@ const state = {
   knownPlannings: [],
   showBabySwitcher: false,
   pendingReturnPlanning: null,
-  loading: true
+  loading: true,
+  user: null,
+  authLoading: true,
+  authMode: 'login', // 'login' | 'signup'
+  authError: null,
+  authBusy: false
 };
 
 function localDateStr(d){
@@ -261,6 +278,36 @@ function randomCode(len){
   return s;
 }
 
+// Redimensionne/compresse une photo côté navigateur avant de la stocker :
+// une photo brute prise avec un téléphone peut peser plusieurs Mo, alors que
+// Firestore refuse les documents de plus de 1 Mo. On la ramène à une taille
+// raisonnable pour un avatar (max 500px de côté, JPEG qualité 0.8).
+function resizeImageFile(file, maxDim, quality){
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        let { width, height } = img;
+        if(width > height){
+          if(width > maxDim){ height = Math.round(height * maxDim / width); width = maxDim; }
+        } else {
+          if(height > maxDim){ width = Math.round(width * maxDim / height); height = maxDim; }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.onerror = reject;
+      img.src = reader.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
 // ============================================================
 // BASE DE DONNÉES (Firebase Firestore)
 // Remplace ces 6 valeurs par celles de TON projet Firebase
@@ -276,6 +323,7 @@ const firebaseConfig = {
 };
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
+const auth = firebase.auth();
 const COLLECTION = 'petites-cuilleres';
 
 const usingRealSharedStorage = true;
@@ -321,6 +369,7 @@ async function loadLocal(){
       state.role = parsed.role;
     }
   }catch(e){}
+  await migrateLocalAccessToMemberships();
   state.loading = false;
   await refreshPlanning();
   render();
@@ -330,7 +379,7 @@ async function saveLocal(){
   await storageAPI.set('my-planning', JSON.stringify({planningId: state.planningId, role: state.role}), false);
   if(state.planningId){
     const idx = state.knownPlannings.findIndex(p => p.planningId === state.planningId);
-    const entry = { planningId: state.planningId, role: state.role, babyName: planningData.babyName || '' };
+    const entry = { planningId: state.planningId, role: state.role, babyName: planningData.babyName || '', photo: planningData.photo || '' };
     if(idx >= 0) state.knownPlannings[idx] = entry;
     else state.knownPlannings.push(entry);
     await storageAPI.set('my-plannings', JSON.stringify(state.knownPlannings), false);
@@ -379,6 +428,80 @@ async function refreshPlanning(){
 
 async function savePlanning(){
   await storageAPI.set('data:' + state.planningId, JSON.stringify(planningData), true);
+  await saveLocal();
+}
+
+// ============================================================
+// COMPTES & DROITS D'ACCÈS (Firebase Authentication)
+// ============================================================
+
+// Enregistre que le compte connecté a accès à ce planning, avec ce rôle.
+// Utilisé à la création d'un planning, à la validation d'un code, et pour
+// migrer automatiquement un accès qui existait déjà localement avant la
+// mise en place des comptes.
+async function ensureMembership(planningId, role){
+  if(!auth.currentUser || !planningId || !role) return;
+  try{
+    await db.collection('memberships').doc(auth.currentUser.uid)
+      .collection('plannings').doc(planningId).set({
+        role, updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+  }catch(e){ console.error('Erreur création accès', e); }
+}
+
+async function migrateLocalAccessToMemberships(){
+  const toMigrate = [...state.knownPlannings];
+  if(state.planningId && state.role && !toMigrate.some(p => p.planningId === state.planningId)){
+    toMigrate.push({ planningId: state.planningId, role: state.role });
+  }
+  for(const p of toMigrate){
+    await ensureMembership(p.planningId, p.role);
+  }
+}
+
+function authErrorMessage(e){
+  const map = {
+    'auth/email-already-in-use': 'Un compte existe déjà avec cet email.',
+    'auth/invalid-email': 'Adresse email invalide.',
+    'auth/weak-password': 'Le mot de passe doit faire au moins 6 caractères.',
+    'auth/user-not-found': 'Aucun compte avec cet email.',
+    'auth/wrong-password': 'Mot de passe incorrect.',
+    'auth/invalid-credential': 'Email ou mot de passe incorrect.',
+    'auth/too-many-requests': 'Trop de tentatives, réessaie dans quelques minutes.'
+  };
+  if(e && e.code === 'auth/popup-closed-by-user') return null;
+  return (e && map[e.code]) || "Une erreur est survenue, réessaie.";
+}
+
+async function signUpWithEmail(email, password){
+  state.authBusy = true; state.authError = null; render();
+  try{ await auth.createUserWithEmailAndPassword(email, password); }
+  catch(e){ state.authError = authErrorMessage(e); state.authBusy = false; render(); }
+}
+
+async function logInWithEmail(email, password){
+  state.authBusy = true; state.authError = null; render();
+  try{ await auth.signInWithEmailAndPassword(email, password); }
+  catch(e){ state.authError = authErrorMessage(e); state.authBusy = false; render(); }
+}
+
+async function signInWithGoogle(){
+  state.authError = null;
+  try{ await auth.signInWithRedirect(new firebase.auth.GoogleAuthProvider()); }
+  catch(e){ state.authError = authErrorMessage(e); render(); }
+}
+
+async function sendPasswordReset(email){
+  if(!email){ state.authError = "Entre ton email dans le champ ci-dessus, puis retape sur ce lien."; render(); return; }
+  try{
+    await auth.sendPasswordResetEmail(email);
+    state.authError = null;
+    alert("Email de réinitialisation envoyé si un compte existe avec cette adresse.");
+  }catch(e){ state.authError = authErrorMessage(e); render(); }
+}
+
+async function logOut(){
+  await auth.signOut();
 }
 
 async function createPlanning(babyName, birthdate, gender){
@@ -394,6 +517,7 @@ async function createPlanning(babyName, birthdate, gender){
   state.planningId = planningId;
   state.role = 'edit';
   state.pendingReturnPlanning = null;
+  await ensureMembership(planningId, 'edit');
   await saveLocal();
   render();
 }
@@ -406,6 +530,7 @@ async function joinWithCode(code){
     state.planningId = parsed.planningId;
     state.role = parsed.role;
     state.pendingReturnPlanning = null;
+    await ensureMembership(parsed.planningId, parsed.role);
     await refreshPlanning();
     await saveLocal();
     render();
@@ -476,6 +601,8 @@ function getMealReactions(m){
 
 function render(){
   const app = document.getElementById('app');
+  if(state.authLoading){ app.innerHTML = ''; return; }
+  if(!state.user){ app.innerHTML = renderAuthGate(); attachAuthEvents(); return; }
   if(state.loading){ app.innerHTML = ''; return; }
   if(!state.planningId){ app.innerHTML = renderWelcome(); attachWelcomeEvents(); return; }
 
@@ -513,6 +640,71 @@ if(window.visualViewport){
   window.visualViewport.addEventListener('scroll', fitModalToViewport);
 }
 
+function renderAuthGate(){
+  const isSignup = state.authMode === 'signup';
+  return `
+    <div style="min-height:100vh;display:flex;flex-direction:column;padding:3rem 1.5rem 2rem;">
+      <div style="width:140px;color:var(--primary);margin:0 auto 2rem;">${ICON_LOGO_WORDMARK}</div>
+      <div class="title-font" style="font-size:22px;color:var(--text);margin-bottom:4px;text-align:center;">${isSignup ? 'Créer un compte' : 'Se connecter'}</div>
+      <div style="font-size:16px;color:var(--text-secondary);margin-bottom:1.75rem;text-align:center;">${isSignup ? 'Pour créer ou rejoindre un planning' : 'Content de te revoir'}</div>
+
+      ${state.authError ? `<p class="error-text" style="text-align:center;margin-bottom:14px;">${state.authError}</p>` : ''}
+
+      <div class="field">
+        <label>Email</label>
+        <input type="email" id="auth-email-input" placeholder="toi@exemple.com" autocomplete="email" />
+      </div>
+      <div class="field">
+        <label>Mot de passe</label>
+        <input type="password" id="auth-password-input" placeholder="••••••••" autocomplete="${isSignup ? 'new-password' : 'current-password'}" />
+      </div>
+      ${!isSignup ? `<button class="btn btn-ghost" id="forgot-password-btn" style="align-self:flex-start;margin:-6px 0 10px;padding:0;">Mot de passe oublié ?</button>` : ''}
+
+      <button class="btn btn-primary" id="auth-submit-btn" style="color:#FFFFFF;margin-top:6px;" ${state.authBusy ? 'disabled' : ''}>
+        ${state.authBusy ? '...' : (isSignup ? 'Créer mon compte' : 'Se connecter')}
+      </button>
+
+      <div style="display:flex;align-items:center;gap:10px;margin:1.25rem 0;">
+        <div style="flex:1;height:1px;background:var(--border);"></div>
+        <span style="color:var(--text-muted);font-size:14px;">ou</span>
+        <div style="flex:1;height:1px;background:var(--border);"></div>
+      </div>
+
+      <button class="btn btn-outline" id="google-signin-btn" ${state.authBusy ? 'disabled' : ''}>
+        ${ICON_GOOGLE} Continuer avec Google
+      </button>
+
+      <button class="btn btn-ghost" id="toggle-auth-mode-btn" style="margin-top:1.5rem;">
+        ${isSignup ? 'Déjà un compte ? Se connecter' : "Pas de compte ? En créer un"}
+      </button>
+    </div>
+  `;
+}
+
+function attachAuthEvents(){
+  const submitBtn = document.getElementById('auth-submit-btn');
+  if(submitBtn) submitBtn.onclick = () => {
+    const email = document.getElementById('auth-email-input').value.trim();
+    const password = document.getElementById('auth-password-input').value;
+    if(!email || !password){ state.authError = 'Remplis les deux champs.'; render(); return; }
+    if(state.authMode === 'signup') signUpWithEmail(email, password);
+    else logInWithEmail(email, password);
+  };
+  const googleBtn = document.getElementById('google-signin-btn');
+  if(googleBtn) googleBtn.onclick = () => signInWithGoogle();
+  const toggleBtn = document.getElementById('toggle-auth-mode-btn');
+  if(toggleBtn) toggleBtn.onclick = () => {
+    state.authMode = state.authMode === 'signup' ? 'login' : 'signup';
+    state.authError = null;
+    render();
+  };
+  const forgotBtn = document.getElementById('forgot-password-btn');
+  if(forgotBtn) forgotBtn.onclick = () => {
+    const email = document.getElementById('auth-email-input').value.trim();
+    sendPasswordReset(email);
+  };
+}
+
 function renderWelcome(){
   if(state.showCreate) return renderCreateForm();
   if(state.showJoin) return renderJoinForm();
@@ -528,16 +720,18 @@ function renderWelcomeReturning(){
       <div style="width:100px;color:var(--primary);margin:0 auto 2rem;">${ICON_LOGO_WORDMARK}</div>
       <div class="title-font" style="font-size:22px;color:var(--text);margin-bottom:14px;">Tes bébés</div>
       <div style="width:100%;">
-        ${state.knownPlannings.map(p => `
+        ${state.knownPlannings.map(p => {
+          const avatarStyle = p.photo ? `background-image:url('${p.photo}');background-size:cover;background-position:center;` : 'background:var(--accent-light);';
+          return `
           <button class="baby-list-item" data-switchid="${p.planningId}" data-switchrole="${p.role}">
-            <span class="avatar" style="width:48px;height:48px;flex-shrink:0;color:var(--accent);">${ICON_BABY_SILHOUETTE}</span>
+            <span class="avatar" style="width:48px;height:48px;flex-shrink:0;color:var(--accent);${avatarStyle}">${p.photo ? '' : ICON_BABY_SILHOUETTE}</span>
             <span style="flex:1;min-width:0;">
               <span style="display:block;font-weight:700;font-size:17px;color:var(--text);">${p.babyName || 'Bébé'}</span>
               <span style="display:block;font-size:14px;color:var(--text-muted);">${p.role === 'edit' ? 'Administrateur' : 'Lecture seule'}</span>
             </span>
             <span style="color:var(--text-muted);font-size:22px;line-height:1;">›</span>
           </button>
-        `).join('')}
+        `;}).join('')}
       </div>
       <div style="margin-top:auto;width:100%;padding-top:1.5rem;">
         <button class="btn btn-primary" id="btn-create" style="margin-bottom:10px;color:#FFFFFF;">
@@ -668,6 +862,7 @@ const ICON_USERS = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" 
 const ICON_MAIL = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 6-10 7L2 6"/></svg>`;
 const ICON_COPY = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
 const ICON_CHECK = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
+const ICON_GOOGLE = `<svg viewBox="0 0 48 48" width="20" height="20"><path fill="#FFC107" d="M43.6 20.5H42V20.4H24v7.2h11.3c-1.6 4.6-6 7.9-11.3 7.9-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3.1l5.1-5.1C33.5 6.1 29 4.4 24 4.4 13.3 4.4 4.6 13.1 4.6 23.8s8.7 19.4 19.4 19.4S43.4 34.5 43.4 23.8c0-1.1-.1-2.3-.3-3.3z"/><path fill="#FF3D00" d="M6.3 14.7l5.9 4.3c1.6-4 5.5-6.8 10-6.8 3.1 0 5.9 1.2 8 3.1l5.1-5.1C33.5 6.1 29 4.4 24 4.4c-7.5 0-14 4.2-17.7 10.3z"/><path fill="#4CAF50" d="M24 43.2c4.9 0 9.4-1.9 12.8-4.9l-5.9-5c-1.9 1.4-4.3 2.2-6.9 2.2-5.3 0-9.7-3.3-11.3-7.9l-5.9 4.6c3.7 6.2 10.2 11 17.2 11z"/><path fill="#1976D2" d="M43.6 20.5H42V20.4H24v7.2h11.3c-.8 2.2-2.2 4.1-4.1 5.4l5.9 5c-.4.4 6.3-4.6 6.3-14.2 0-1.1-.1-2.3-.3-3.3z"/></svg>`;
 
 function renderMain(){
   autoMigratePastMeals();
@@ -712,11 +907,15 @@ function renderMain(){
 function renderBabySwitcherModal(){
   const rows = state.knownPlannings.map(p => {
     const isCurrent = p.planningId === state.planningId;
+    const avatarStyle = p.photo ? `background-image:url('${p.photo}');background-size:cover;background-position:center;` : 'background:var(--accent-light);';
     return `
     <div class="card" style="display:flex;align-items:center;justify-content:space-between;">
-      <div>
-        <div style="font-weight:600;font-size:16px;">${p.babyName || 'Bébé'}</div>
-        <div style="font-size:16px;color:var(--text-secondary);">${p.role === 'edit' ? 'Administrateur' : 'Lecture seule'}${isCurrent ? ' · Actuel' : ''}</div>
+      <div style="display:flex;align-items:center;gap:12px;min-width:0;">
+        <span class="avatar" style="width:44px;height:44px;flex-shrink:0;color:var(--accent);${avatarStyle}">${p.photo ? '' : ICON_BABY_SILHOUETTE}</span>
+        <div style="min-width:0;">
+          <div style="font-weight:600;font-size:16px;">${p.babyName || 'Bébé'}</div>
+          <div style="font-size:16px;color:var(--text-secondary);">${p.role === 'edit' ? 'Administrateur' : 'Lecture seule'}${isCurrent ? ' · Actuel' : ''}</div>
+        </div>
       </div>
       <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
         ${!isCurrent ? `<button class="btn btn-secondary" data-switchid="${p.planningId}" data-switchrole="${p.role}" style="height:36px;font-size:16px;padding:0 12px;">Basculer</button>` : ''}
@@ -891,6 +1090,13 @@ function renderProfilTab(){
         <div style="font-size:16px;font-weight:600;color:var(--text);">${genderLabel}</div>
       </div>
       ${canEdit ? `<button class="edit-field-btn" data-field="gender" aria-label="Modifier le sexe">${ICON_EDIT}</button>` : ''}
+    </div>
+    <div class="card" style="margin-top:1.75rem;display:flex;justify-content:space-between;align-items:center;gap:10px;">
+      <div style="min-width:0;">
+        <div style="font-size:16px;color:var(--text-secondary);margin-bottom:4px;">Connecté avec</div>
+        <div style="font-size:15px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${(state.user && state.user.email) || 'Compte Google'}</div>
+      </div>
+      <button class="btn btn-secondary" id="logout-btn" style="width:auto;height:38px;padding:0 14px;font-size:15px;flex-shrink:0;">Déconnexion</button>
     </div>
     ${state.editingField ? renderProfileEditModal() : ''}
   `;
@@ -1097,6 +1303,9 @@ function attachMainEvents(){
   const switchBabyBtn = document.getElementById('switch-baby-btn');
   if(switchBabyBtn) switchBabyBtn.onclick = () => { state.showBabySwitcher = true; render(); };
 
+  const logoutBtn = document.getElementById('logout-btn');
+  if(logoutBtn) logoutBtn.onclick = () => logOut();
+
   const babySwitcherOverlay = document.getElementById('baby-switcher-overlay');
   if(babySwitcherOverlay){
     babySwitcherOverlay.onclick = (e) => { if(e.target.id === 'baby-switcher-overlay'){ state.showBabySwitcher = false; render(); } };
@@ -1131,16 +1340,17 @@ function attachMainEvents(){
   const photoInput = document.getElementById('photo-input');
   if(photoBtn && photoInput){
     photoBtn.onclick = () => photoInput.click();
-    photoInput.onchange = () => {
+    photoInput.onchange = async () => {
       const file = photoInput.files[0];
       if(!file) return;
-      const reader = new FileReader();
-      reader.onload = async () => {
-        planningData.photo = reader.result;
+      try{
+        planningData.photo = await resizeImageFile(file, 500, 0.8);
         await savePlanning();
         render();
-      };
-      reader.readAsDataURL(file);
+      }catch(e){
+        console.error('Erreur traitement photo', e);
+        alert("Impossible d'utiliser cette photo, réessaie avec une autre.");
+      }
     };
   }
 
@@ -1384,7 +1594,21 @@ document.addEventListener('focusin', (e) => {
   }
 });
 
-loadLocal();
+auth.getRedirectResult().catch((e) => {
+  if(e && e.code) state.authError = authErrorMessage(e);
+});
+
+auth.onAuthStateChanged(async (user) => {
+  state.user = user;
+  state.authLoading = false;
+  if(user){
+    state.authBusy = false;
+    await loadLocal();
+  } else {
+    state.loading = false;
+    render();
+  }
+});
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
