@@ -208,7 +208,6 @@ const state = {
   babyName: null,
   tab: 'planning',
   showModal: false,
-  showJoin: false,
   showCreate: false,
   statsExpanded: null,
   editingField: null,
@@ -219,7 +218,11 @@ const state = {
   user: null,
   authLoading: true,
   authScreen: 'landing', // 'landing' | 'login' | 'signup'
-  inviteRole: 'view', // 'edit' | 'view' — rôle sélectionné dans l'invitation par email/SMS
+  authMethod: 'email', // 'email' | 'phone'
+  userProfile: null,
+  inviteRole: 'view', // 'edit' | 'view' — rôle sélectionné pour donner un accès
+  grantError: null,
+  grantBusy: false,
   authError: null,
   authBusy: false
 };
@@ -357,10 +360,6 @@ const storageAPI = {
 
 async function loadLocal(){
   try{
-    const rl = await storageAPI.get('my-plannings', false);
-    if(rl && rl.value) state.knownPlannings = JSON.parse(rl.value);
-  }catch(e){ state.knownPlannings = []; }
-  try{
     const r = await storageAPI.get('my-planning', false);
     if(r && r.value){
       const parsed = JSON.parse(r.value);
@@ -368,7 +367,7 @@ async function loadLocal(){
       state.role = parsed.role;
     }
   }catch(e){}
-  await migrateLocalAccessToMemberships();
+  await refreshKnownPlanningsFromMemberships();
   state.loading = false;
   await refreshPlanning();
   render();
@@ -405,17 +404,12 @@ async function forgetPlanning(planningId){
 }
 
 let planningData = { babyName: '', meals: [] };
-let codes = { edit: null, view: null };
 
 async function refreshPlanning(){
   if(!state.planningId) return;
   try{
     const r = await storageAPI.get('data:' + state.planningId, true);
     if(r && r.value) planningData = JSON.parse(r.value);
-  }catch(e){}
-  try{
-    const rc = await storageAPI.get('codes:' + state.planningId, true);
-    if(rc && rc.value) codes = JSON.parse(rc.value);
   }catch(e){}
 }
 
@@ -426,40 +420,128 @@ async function savePlanning(){
 
 // ============================================================
 // COMPTES & DROITS D'ACCÈS (Firebase Authentication)
+// Chaque planning a des membres (administrateur ou lecture seule),
+// retrouvés et gérés via l'email ou le numéro de téléphone des comptes —
+// il n'y a plus de code à partager.
 // ============================================================
 
-// Enregistre que le compte connecté a accès à ce planning, avec ce rôle.
-// Utilisé à la création d'un planning, à la validation d'un code, et pour
-// migrer automatiquement un accès qui existait déjà localement avant la
-// mise en place des comptes.
-async function ensureMembership(planningId, role){
+function normalizeIdentifier(str){
+  return (str || '').trim().toLowerCase().replace(/\s+/g, '');
+}
+
+// Convertit un numéro de téléphone en "email" interne : Firebase ne propose
+// nativement que téléphone + code SMS (payant au-delà d'un petit quota),
+// pas téléphone + mot de passe. On réutilise donc son système email/mot de
+// passe en coulisses, avec un email fabriqué à partir du numéro.
+function phoneToSyntheticEmail(phone){
+  const digits = (phone || '').replace(/[^0-9]/g, '');
+  return `tel${digits}@petitescuilleres-users.app`;
+}
+
+// Enregistre le compte dans l'annuaire (email ou téléphone -> uid), pour
+// qu'un administrateur puisse donner accès à quelqu'un en tapant juste son
+// email ou son numéro.
+async function registerUserLookup(identifier){
+  const norm = normalizeIdentifier(identifier);
+  if(!norm || !auth.currentUser) return;
+  try{ await db.collection('userLookup').doc(norm).set({ uid: auth.currentUser.uid }); }
+  catch(e){ console.error('Erreur enregistrement annuaire', e); }
+}
+
+async function saveUserProfile(fields){
+  if(!auth.currentUser) return;
+  try{ await db.collection('users').doc(auth.currentUser.uid).set(fields, { merge: true }); }
+  catch(e){ console.error('Erreur profil utilisateur', e); }
+}
+
+// Rend le compte connecté membre de ce planning (utilisé à sa création).
+async function ensureMembership(planningId, role, identifier){
   if(!auth.currentUser || !planningId || !role) return;
+  const norm = normalizeIdentifier(identifier || auth.currentUser.email || '');
   try{
-    await db.collection('memberships').doc(auth.currentUser.uid)
-      .collection('plannings').doc(planningId).set({
-        role, updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-      });
+    await db.collection('memberships').doc(auth.currentUser.uid).collection('plannings').doc(planningId).set({
+      role, planningId, updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    await db.collection('planningMembers').doc(planningId).collection('members').doc(auth.currentUser.uid).set({
+      role, identifier: norm, updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
   }catch(e){ console.error('Erreur création accès', e); }
 }
 
-async function migrateLocalAccessToMemberships(){
-  const toMigrate = [...state.knownPlannings];
-  if(state.planningId && state.role && !toMigrate.some(p => p.planningId === state.planningId)){
-    toMigrate.push({ planningId: state.planningId, role: state.role });
-  }
-  for(const p of toMigrate){
-    await ensureMembership(p.planningId, p.role);
+// Donne accès à ce planning à la personne identifiée par cet email ou ce
+// numéro (elle doit déjà avoir un compte Petites Cuillères).
+async function grantAccess(planningId, identifier, role){
+  const norm = normalizeIdentifier(identifier);
+  if(!norm) return { ok: false, error: "Entre un email ou un numéro de téléphone." };
+  try{
+    const lookup = await db.collection('userLookup').doc(norm).get();
+    if(!lookup.exists){
+      return { ok: false, error: "Cette personne n'a pas encore de compte. Elle doit d'abord en créer un avec cet email ou ce numéro, puis réessaie." };
+    }
+    const targetUid = lookup.data().uid;
+    await db.collection('memberships').doc(targetUid).collection('plannings').doc(planningId).set({
+      role, planningId, updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    await db.collection('planningMembers').doc(planningId).collection('members').doc(targetUid).set({
+      role, identifier: norm, updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    return { ok: true };
+  }catch(e){
+    console.error('Erreur attribution accès', e);
+    return { ok: false, error: "Une erreur est survenue, réessaie." };
   }
 }
 
-function authErrorMessage(e){
+async function revokeAccess(planningId, uid){
+  try{
+    await db.collection('planningMembers').doc(planningId).collection('members').doc(uid).delete();
+    await db.collection('memberships').doc(uid).collection('plannings').doc(planningId).delete();
+  }catch(e){ console.error('Erreur retrait accès', e); }
+}
+
+async function listPlanningMembers(planningId){
+  try{
+    const snap = await db.collection('planningMembers').doc(planningId).collection('members').get();
+    return snap.docs.map(d => ({ uid: d.id, ...d.data() }));
+  }catch(e){ console.error('Erreur liste des membres', e); return []; }
+}
+
+// Reconstruit la liste des bébés accessibles pour ce compte à partir de
+// Firestore — utile par exemple si un accès a été donné par un
+// administrateur, ou depuis un autre appareil.
+async function refreshKnownPlanningsFromMemberships(){
+  if(!auth.currentUser) return;
+  try{
+    const snap = await db.collection('memberships').doc(auth.currentUser.uid).collection('plannings').get();
+    const list = [];
+    for(const doc of snap.docs){
+      const planningId = doc.id;
+      const role = doc.data().role;
+      let babyName = '', photo = '';
+      try{
+        const dataDoc = await storageAPI.get('data:' + planningId, true);
+        if(dataDoc && dataDoc.value){
+          const parsed = JSON.parse(dataDoc.value);
+          babyName = parsed.babyName || '';
+          photo = parsed.photo || '';
+        }
+      }catch(e){}
+      list.push({ planningId, role, babyName, photo });
+    }
+    state.knownPlannings = list;
+    await storageAPI.set('my-plannings', JSON.stringify(state.knownPlannings), false);
+  }catch(e){ console.error('Erreur rafraîchissement des accès', e); }
+}
+
+function authErrorMessage(e, context){
+  const noun = context === 'phone' ? 'numéro' : 'email';
   const map = {
-    'auth/email-already-in-use': 'Un compte existe déjà avec cet email.',
-    'auth/invalid-email': 'Adresse email invalide.',
+    'auth/email-already-in-use': `Un compte existe déjà avec cet ${noun}.`,
+    'auth/invalid-email': context === 'phone' ? 'Numéro de téléphone invalide.' : 'Adresse email invalide.',
     'auth/weak-password': 'Le mot de passe doit faire au moins 6 caractères.',
-    'auth/user-not-found': 'Aucun compte avec cet email.',
+    'auth/user-not-found': `Aucun compte avec cet ${noun}.`,
     'auth/wrong-password': 'Mot de passe incorrect.',
-    'auth/invalid-credential': 'Email ou mot de passe incorrect.',
+    'auth/invalid-credential': `${context === 'phone' ? 'Numéro' : 'Email'} ou mot de passe incorrect.`,
     'auth/too-many-requests': 'Trop de tentatives, réessaie dans quelques minutes.',
     'auth/unauthorized-domain': "Ce site n'est pas encore autorisé pour la connexion Google (Firebase Console > Authentication > Settings > Authorized domains).",
     'auth/operation-not-allowed': "La connexion Google n'est pas activée sur ce projet (Firebase Console > Authentication > Sign-in method).",
@@ -476,23 +558,47 @@ function authErrorMessage(e){
 
 async function signUpWithEmail(email, password){
   state.authBusy = true; state.authError = null; render();
-  try{ await auth.createUserWithEmailAndPassword(email, password); }
-  catch(e){ state.authError = authErrorMessage(e); state.authBusy = false; render(); }
+  try{
+    await auth.createUserWithEmailAndPassword(email, password);
+    await registerUserLookup(email);
+    await saveUserProfile({ email, method: 'email' });
+  }
+  catch(e){ state.authError = authErrorMessage(e, 'email'); state.authBusy = false; render(); }
 }
 
 async function logInWithEmail(email, password){
   state.authBusy = true; state.authError = null; render();
   try{ await auth.signInWithEmailAndPassword(email, password); }
-  catch(e){ state.authError = authErrorMessage(e); state.authBusy = false; render(); }
+  catch(e){ state.authError = authErrorMessage(e, 'email'); state.authBusy = false; render(); }
+}
+
+async function signUpWithPhone(phone, password){
+  state.authBusy = true; state.authError = null; render();
+  try{
+    await auth.createUserWithEmailAndPassword(phoneToSyntheticEmail(phone), password);
+    await registerUserLookup(phone);
+    await saveUserProfile({ phone, method: 'phone' });
+  }
+  catch(e){ state.authError = authErrorMessage(e, 'phone'); state.authBusy = false; render(); }
+}
+
+async function logInWithPhone(phone, password){
+  state.authBusy = true; state.authError = null; render();
+  try{ await auth.signInWithEmailAndPassword(phoneToSyntheticEmail(phone), password); }
+  catch(e){ state.authError = authErrorMessage(e, 'phone'); state.authBusy = false; render(); }
 }
 
 async function signInWithGoogle(){
   state.authError = null;
   state.authBusy = true; render();
   try{
-    await auth.signInWithPopup(new firebase.auth.GoogleAuthProvider());
+    const result = await auth.signInWithPopup(new firebase.auth.GoogleAuthProvider());
+    if(result && result.user && result.user.email){
+      await registerUserLookup(result.user.email);
+      await saveUserProfile({ email: result.user.email, method: 'google' });
+    }
   }catch(e){
-    state.authError = authErrorMessage(e);
+    state.authError = authErrorMessage(e, 'email');
   }
   state.authBusy = false;
   render();
@@ -513,51 +619,14 @@ async function logOut(){
 
 async function createPlanning(babyName, birthdate, gender){
   const planningId = randomCode(10);
-  const editCode = randomCode(6);
-  const viewCode = randomCode(6);
   planningData = { babyName, birthdate: birthdate || null, gender: gender || null, meals: [] };
-  codes = { edit: editCode, view: viewCode };
   await storageAPI.set('data:' + planningId, JSON.stringify(planningData), true);
-  await storageAPI.set('codes:' + planningId, JSON.stringify(codes), true);
-  await storageAPI.set('code-lookup:' + editCode, JSON.stringify({planningId, role:'edit'}), true);
-  await storageAPI.set('code-lookup:' + viewCode, JSON.stringify({planningId, role:'view'}), true);
   state.planningId = planningId;
   state.role = 'edit';
-  await ensureMembership(planningId, 'edit');
+  const myIdentifier = state.userProfile && (state.userProfile.phone || state.userProfile.email);
+  await ensureMembership(planningId, 'edit', myIdentifier);
   await saveLocal();
   render();
-}
-
-async function joinWithCode(code){
-  try{
-    const r = await storageAPI.get('code-lookup:' + code.trim().toUpperCase(), true);
-    if(!r || !r.value){ return false; }
-    const parsed = JSON.parse(r.value);
-    state.planningId = parsed.planningId;
-    state.role = parsed.role;
-    await ensureMembership(parsed.planningId, parsed.role);
-    await refreshPlanning();
-    await saveLocal();
-    render();
-    return true;
-  }catch(e){ return false; }
-}
-
-async function regenerateBothCodes(){
-  try{
-    for(const type of ['edit','view']){
-      const oldCode = codes[type];
-      const newCode = randomCode(6);
-      try{ await storageAPI.delete('code-lookup:' + oldCode, true); }catch(e){}
-      await storageAPI.set('code-lookup:' + newCode, JSON.stringify({planningId: state.planningId, role: type}), true);
-      codes[type] = newCode;
-    }
-    await storageAPI.set('codes:' + state.planningId, JSON.stringify(codes), true);
-    render();
-  }catch(e){
-    console.error('Erreur régénération des codes', e);
-    alert("La régénération des codes a échoué, réessaie.");
-  }
 }
 
 function fmtDate(d){
@@ -653,17 +722,23 @@ function renderAuthLanding(){
 }
 
 function renderAuthForm(isSignup){
+  const isPhone = state.authMethod === 'phone';
   return `
     <div style="min-height:100vh;display:flex;flex-direction:column;padding:2rem 1.5rem 2rem;">
       <button id="auth-back-btn" aria-label="Retour" ${state.authBusy ? 'disabled style="opacity:0.3;background:none;border:none;padding:8px;margin:-8px -8px 0.5rem;align-self:flex-start;color:var(--text);"' : 'style="background:none;border:none;padding:8px;margin:-8px -8px 0.5rem;align-self:flex-start;color:var(--text);cursor:pointer;"'}>${ICON_BACK}</button>
-      <div style="width:120px;color:var(--primary);margin:0 auto 1.75rem;">${ICON_LOGO_WORDMARK}</div>
-      <div class="title-font" style="font-size:22px;color:var(--text);margin-bottom:1.75rem;text-align:center;">${isSignup ? 'Créer un compte' : 'Se connecter'}</div>
+      <div style="width:120px;color:var(--primary);margin:0 auto 1.5rem;">${ICON_LOGO_WORDMARK}</div>
+      <div class="title-font" style="font-size:22px;color:var(--text);margin-bottom:1.25rem;text-align:center;">${isSignup ? 'Créer un compte' : 'Se connecter'}</div>
+
+      <div style="display:flex;gap:8px;margin-bottom:1.25rem;">
+        <button class="btn ${!isPhone ? 'btn-primary' : 'btn-secondary'}" id="auth-method-email" style="height:38px;font-size:15px;${!isPhone ? 'color:#FFFFFF;' : ''}">Email</button>
+        <button class="btn ${isPhone ? 'btn-primary' : 'btn-secondary'}" id="auth-method-phone" style="height:38px;font-size:15px;${isPhone ? 'color:#FFFFFF;' : ''}">Téléphone</button>
+      </div>
 
       ${state.authError ? `<p class="error-text" style="text-align:center;margin-bottom:14px;">${state.authError}</p>` : ''}
 
       <div class="field">
-        <label>Email</label>
-        <input type="email" id="auth-email-input" placeholder="toi@exemple.com" autocomplete="email" />
+        <label>${isPhone ? 'Numéro de téléphone' : 'Email'}</label>
+        <input type="${isPhone ? 'tel' : 'email'}" id="auth-identifier-input" placeholder="${isPhone ? '+33 6 12 34 56 78' : 'toi@exemple.com'}" autocomplete="${isPhone ? 'tel' : 'email'}" />
       </div>
       <div class="field">
         <label>Mot de passe</label>
@@ -673,7 +748,7 @@ function renderAuthForm(isSignup){
       <button class="btn btn-primary" id="auth-submit-btn" style="color:#FFFFFF;" ${state.authBusy ? 'disabled' : ''}>
         ${state.authBusy ? (isSignup ? 'Création en cours...' : 'Connexion en cours...') : (isSignup ? 'Créer mon compte' : 'Se connecter')}
       </button>
-      ${!isSignup ? `<button class="btn btn-ghost" id="forgot-password-btn" style="margin:4px auto 0;">Mot de passe oublié ?</button>` : ''}
+      ${(!isSignup && !isPhone) ? `<button class="btn btn-ghost" id="forgot-password-btn" style="margin:4px auto 0;">Mot de passe oublié ?</button>` : ''}
 
       <div style="display:flex;align-items:center;gap:10px;margin:1.25rem 0;">
         <div style="flex:1;height:1px;background:var(--border);"></div>
@@ -700,13 +775,24 @@ function attachAuthEvents(){
   const backBtn = document.getElementById('auth-back-btn');
   if(backBtn) backBtn.onclick = () => { if(state.authBusy) return; state.authScreen = 'landing'; state.authError = null; render(); };
 
+  const methodEmailBtn = document.getElementById('auth-method-email');
+  if(methodEmailBtn) methodEmailBtn.onclick = () => { state.authMethod = 'email'; state.authError = null; render(); };
+  const methodPhoneBtn = document.getElementById('auth-method-phone');
+  if(methodPhoneBtn) methodPhoneBtn.onclick = () => { state.authMethod = 'phone'; state.authError = null; render(); };
+
   const submitBtn = document.getElementById('auth-submit-btn');
   if(submitBtn) submitBtn.onclick = () => {
-    const email = document.getElementById('auth-email-input').value.trim();
+    const identifier = document.getElementById('auth-identifier-input').value.trim();
     const password = document.getElementById('auth-password-input').value;
-    if(!email || !password){ state.authError = 'Remplis les deux champs.'; render(); return; }
-    if(state.authScreen === 'signup') signUpWithEmail(email, password);
-    else logInWithEmail(email, password);
+    if(!identifier || !password){ state.authError = 'Remplis les deux champs.'; render(); return; }
+    const isPhone = state.authMethod === 'phone';
+    if(state.authScreen === 'signup'){
+      if(isPhone) signUpWithPhone(identifier, password);
+      else signUpWithEmail(identifier, password);
+    } else {
+      if(isPhone) logInWithPhone(identifier, password);
+      else logInWithEmail(identifier, password);
+    }
   };
   const googleBtn = document.getElementById('google-signin-btn');
   if(googleBtn) googleBtn.onclick = () => signInWithGoogle();
@@ -718,14 +804,13 @@ function attachAuthEvents(){
   };
   const forgotBtn = document.getElementById('forgot-password-btn');
   if(forgotBtn) forgotBtn.onclick = () => {
-    const email = document.getElementById('auth-email-input').value.trim();
+    const email = document.getElementById('auth-identifier-input').value.trim();
     sendPasswordReset(email);
   };
 }
 
 function renderWelcome(){
   if(state.showCreate) return renderCreateForm();
-  if(state.showJoin) return renderJoinForm();
   return state.knownPlannings.length ? renderWelcomeReturning() : renderWelcomeFirstTime();
 }
 
@@ -752,12 +837,10 @@ function renderWelcomeReturning(){
         `;}).join('')}
       </div>
       <div style="margin-top:auto;width:100%;padding-top:1.5rem;">
-        <button class="btn btn-primary" id="btn-create" style="margin-bottom:10px;color:#FFFFFF;">
+        <button class="btn btn-primary" id="btn-create" style="color:#FFFFFF;">
           Ajouter un autre bébé
         </button>
-        <button class="btn btn-outline" id="btn-join">
-          Rejoindre avec un code
-        </button>
+        <p style="font-size:14px;color:var(--text-muted);text-align:center;margin:10px 0 0;">Pour un autre bébé, demande à un administrateur de te donner accès depuis l'onglet Partage, avec cet email ou ce numéro.</p>
       </div>
     </div>
   `;
@@ -783,12 +866,10 @@ function renderWelcomeFirstTime(){
           Planifie les repas, note ce que bébé aime, et partage le tout avec toute la famille.
         </p>
         <div style="margin-top:auto;width:100%;">
-          <button class="btn btn-primary" id="btn-create" style="margin-bottom:10px;color:#FFFFFF;">
+          <button class="btn btn-primary" id="btn-create" style="color:#FFFFFF;">
             Créer le planning de mon bébé
           </button>
-          <button class="btn btn-outline" id="btn-join">
-            Rejoindre avec un code
-          </button>
+          <p style="font-size:14px;color:var(--text-muted);text-align:center;margin:10px 0 0;">Ou demande à un administrateur de te donner accès depuis l'app, avec ton email ou ton numéro.</p>
         </div>
       </div>
     </div>
@@ -830,22 +911,6 @@ function renderCreateForm(){
   `;
 }
 
-function renderJoinForm(){
-  return `
-    <div class="screen">
-      <button class="header-icon-btn" id="back-btn" style="margin:0 0 1rem -6px;padding:0;opacity:1;" aria-label="Retour">${ICON_BACK}</button>
-      <h2 style="font-size:40px;margin-bottom:0.5rem;">Rejoindre un planning</h2>
-      <p style="color:var(--text-secondary);font-size:16px;margin-bottom:1.25rem;">Entre le code reçu par SMS ou message.</p>
-      <div class="field">
-        <label>Code d'invitation</label>
-        <input type="text" id="join-code-input" placeholder="Ex : K7P2QX" style="text-transform:uppercase;letter-spacing:2px;" />
-        <p class="error-text" id="join-error" style="display:none;">Code invalide, vérifie et réessaie</p>
-      </div>
-      <button class="btn btn-primary" id="submit-join">Rejoindre</button>
-    </div>
-  `;
-}
-
 function autoMigratePastMeals(){
   const now = new Date();
   let changed = false;
@@ -877,10 +942,6 @@ const ICON_REACT_AIME = `<svg viewBox="0 0 24 24" width="20" height="20" fill="n
 const ICON_REACT_MITIGE = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="8" y1="15" x2="16" y2="15"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>`;
 const ICON_REACT_ALLERGIE = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l10 18H2L12 3z"/><line x1="12" y1="10" x2="12" y2="14"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`;
 const ICON_USERS = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>`;
-const ICON_COPY = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
-const ICON_MAIL = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 6-10 7L2 6"/></svg>`;
-const ICON_PHONE = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.362 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.338 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg>`;
-const ICON_CHECK = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
 const ICON_GOOGLE = `<svg viewBox="0 0 48 48" width="20" height="20"><path fill="#FFC107" d="M43.6 20.5H42V20.4H24v7.2h11.3c-1.6 4.6-6 7.9-11.3 7.9-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3.1l5.1-5.1C33.5 6.1 29 4.4 24 4.4 13.3 4.4 4.6 13.1 4.6 23.8s8.7 19.4 19.4 19.4S43.4 34.5 43.4 23.8c0-1.1-.1-2.3-.3-3.3z"/><path fill="#FF3D00" d="M6.3 14.7l5.9 4.3c1.6-4 5.5-6.8 10-6.8 3.1 0 5.9 1.2 8 3.1l5.1-5.1C33.5 6.1 29 4.4 24 4.4c-7.5 0-14 4.2-17.7 10.3z"/><path fill="#4CAF50" d="M24 43.2c4.9 0 9.4-1.9 12.8-4.9l-5.9-5c-1.9 1.4-4.3 2.2-6.9 2.2-5.3 0-9.7-3.3-11.3-7.9l-5.9 4.6c3.7 6.2 10.2 11 17.2 11z"/><path fill="#1976D2" d="M43.6 20.5H42V20.4H24v7.2h11.3c-.8 2.2-2.2 4.1-4.1 5.4l5.9 5c-.4.4 6.3-4.6 6.3-14.2 0-1.1-.1-2.3-.3-3.3z"/></svg>`;
 
 function renderMain(){
@@ -1113,7 +1174,7 @@ function renderProfilTab(){
     <div class="card" style="margin-top:1.75rem;display:flex;justify-content:space-between;align-items:center;gap:10px;">
       <div style="min-width:0;">
         <div style="font-size:16px;color:var(--text-secondary);margin-bottom:4px;">Connecté avec</div>
-        <div style="font-size:15px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${(state.user && state.user.email) || 'Compte Google'}</div>
+        <div style="font-size:15px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${(state.userProfile && (state.userProfile.phone || state.userProfile.email)) || (state.user && state.user.email) || 'Compte connecté'}</div>
       </div>
       <button class="btn btn-secondary" id="logout-btn" style="width:auto;height:38px;padding:0 14px;font-size:15px;flex-shrink:0;">Déconnexion</button>
     </div>
@@ -1164,45 +1225,52 @@ function renderProfileEditModal(){
   `;
 }
 
+let planningMembers = [];
+let planningMembersForId = null;
+
+async function loadPlanningMembersIfNeeded(){
+  if(state.tab !== 'partage' || !state.planningId || state.role !== 'edit') return;
+  if(planningMembersForId === state.planningId) return;
+  planningMembersForId = state.planningId;
+  planningMembers = await listPlanningMembers(state.planningId);
+  render();
+}
+
 function renderPartageTab(){
   if(state.role !== 'edit'){
-    return `<p style="text-align:center;color:var(--text-muted);font-size:16px;margin-top:2rem;">Seul un administrateur peut gérer le partage de ce planning.</p>`;
+    return `<p style="text-align:center;color:var(--text-muted);font-size:16px;margin-top:2rem;">Seul un administrateur peut gérer les accès de ce planning.</p>`;
   }
-  const roleLabel = state.inviteRole === 'edit' ? 'Administrateur' : 'Lecture seule';
+  const myUid = auth.currentUser && auth.currentUser.uid;
+  const membersHtml = planningMembersForId === state.planningId
+    ? (planningMembers.length ? planningMembers.map(m => `
+        <div class="card" style="display:flex;align-items:center;justify-content:space-between;">
+          <div style="min-width:0;">
+            <div style="font-weight:600;font-size:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${m.identifier || 'Compte'}${m.uid === myUid ? ' (toi)' : ''}</div>
+            <div style="font-size:14px;color:var(--text-secondary);">${m.role === 'edit' ? 'Administrateur' : 'Lecture seule'}</div>
+          </div>
+          ${m.uid !== myUid ? `<button class="header-icon-btn" data-revokeuid="${m.uid}" aria-label="Retirer l'accès" style="opacity:0.7;flex-shrink:0;">${ICON_TRASH}</button>` : ''}
+        </div>
+      `).join('') : `<p style="color:var(--text-muted);font-size:15px;">Personne d'autre pour l'instant.</p>`)
+    : `<p style="color:var(--text-muted);font-size:15px;">Chargement...</p>`;
+
   return `
-    <p style="font-size:16px;color:var(--text-secondary);margin:0 0 1.25rem;">Invite quelqu'un, ou partage un code directement.</p>
+    <p style="font-size:16px;color:var(--text-secondary);margin:0 0 1.25rem;">Donne accès à quelqu'un via son email ou son numéro de téléphone (il doit déjà avoir un compte).</p>
 
     <div class="card">
-      <label style="display:block;margin-bottom:10px;">Inviter par email ou SMS</label>
+      <label style="display:block;margin-bottom:10px;">Donner un accès</label>
 
       <div style="display:flex;gap:8px;margin-bottom:12px;">
         <button class="btn ${state.inviteRole === 'edit' ? 'btn-primary' : 'btn-secondary'}" data-inviterole="edit" style="height:38px;font-size:15px;${state.inviteRole === 'edit' ? 'color:#FFFFFF;' : ''}">Administrateur</button>
         <button class="btn ${state.inviteRole === 'view' ? 'btn-primary' : 'btn-secondary'}" data-inviterole="view" style="height:38px;font-size:15px;${state.inviteRole === 'view' ? 'color:#FFFFFF;' : ''}">Lecture seule</button>
       </div>
-      <p style="font-size:14px;color:var(--text-muted);margin:-4px 0 12px;">Accès envoyé : <strong>${roleLabel}</strong></p>
 
-      <input type="email" id="invite-email-input" placeholder="Email de la personne" style="margin-bottom:8px;" />
-      <button class="btn btn-outline" id="invite-email-btn" style="margin-bottom:14px;">${ICON_MAIL} Envoyer par email</button>
-
-      <input type="tel" id="invite-phone-input" placeholder="Numéro de téléphone" style="margin-bottom:8px;" />
-      <button class="btn btn-outline" id="invite-sms-btn">${ICON_PHONE} Envoyer par SMS</button>
+      <input type="text" id="grant-identifier-input" placeholder="Email ou numéro de téléphone" style="margin-bottom:10px;" autocapitalize="none" />
+      ${state.grantError ? `<p class="error-text" style="margin-bottom:10px;">${state.grantError}</p>` : ''}
+      <button class="btn btn-primary" id="grant-access-btn" style="color:#FFFFFF;" ${state.grantBusy ? 'disabled' : ''}>${state.grantBusy ? 'Envoi en cours...' : "Donner l'accès"}</button>
     </div>
 
-    <label style="display:flex;align-items:center;gap:6px;margin-top:1.5rem;">Code d'édition (peut ajouter des repas)</label>
-    <div class="code-box" style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
-      <span>${codes.edit || '------'}</span>
-      <button class="copy-code-btn" data-copy="${codes.edit || ''}" aria-label="Copier le code d'édition" style="background:none;border:none;cursor:pointer;color:inherit;display:flex;align-items:center;padding:4px;flex-shrink:0;">${ICON_COPY}</button>
-    </div>
-
-    <label style="display:flex;align-items:center;gap:6px;margin-top:1.25rem;">Code lecture seule (consultation uniquement)</label>
-    <div class="code-box" style="background:var(--accent-light);color:var(--accent);display:flex;align-items:center;justify-content:space-between;gap:10px;">
-      <span>${codes.view || '------'}</span>
-      <button class="copy-code-btn" data-copy="${codes.view || ''}" aria-label="Copier le code de lecture seule" style="background:none;border:none;cursor:pointer;color:inherit;display:flex;align-items:center;padding:4px;flex-shrink:0;">${ICON_COPY}</button>
-    </div>
-
-    <button class="btn btn-secondary" id="regen-both-btn" style="margin-top:1.25rem;">Régénérer les 2 codes</button>
-
-    <p class="muted-note">Régénérer invalide les anciens codes immédiatement — utile si tu penses qu'ils ont été partagés par erreur.</p>
+    <label style="display:block;margin:1.5rem 0 10px;">Personnes ayant accès</label>
+    ${membersHtml}
   `;
 }
 
@@ -1266,11 +1334,9 @@ let editGenderTemp = null;
 
 function attachWelcomeEvents(){
   const c = document.getElementById('btn-create');
-  const j = document.getElementById('btn-join');
   const back = document.getElementById('back-btn');
   if(c) c.onclick = () => { state.showCreate = true; render(); };
-  if(j) j.onclick = () => { state.showJoin = true; render(); };
-  if(back) back.onclick = () => { state.showCreate = false; state.showJoin = false; render(); };
+  if(back) back.onclick = () => { state.showCreate = false; render(); };
 
   document.querySelectorAll('[data-switchid]').forEach(btn => {
     btn.onclick = async () => {
@@ -1305,19 +1371,11 @@ function attachWelcomeEvents(){
       await createPlanning(val, birthdate, createGender);
     };
   }
-
-  const submitJoin = document.getElementById('submit-join');
-  if(submitJoin){
-    submitJoin.onclick = async () => {
-      const val = document.getElementById('join-code-input').value.trim();
-      if(!val) return;
-      const ok = await joinWithCode(val);
-      if(!ok) document.getElementById('join-error').style.display = 'block';
-    };
-  }
 }
 
 function attachMainEvents(){
+  loadPlanningMembersIfNeeded();
+
   document.querySelectorAll('.tab, .header-icon-btn, #avatar-btn').forEach(btn => {
     btn.onclick = () => { state.tab = btn.dataset.tab; render(); };
   });
@@ -1452,55 +1510,31 @@ function attachMainEvents(){
     }, 0);
   };
 
-  const regenBothBtn = document.getElementById('regen-both-btn');
-  if(regenBothBtn) regenBothBtn.onclick = () => regenerateBothCodes();
-
   document.querySelectorAll('[data-inviterole]').forEach(btn => {
     btn.onclick = () => { state.inviteRole = btn.dataset.inviterole; render(); };
   });
 
-  const inviteEmailBtn = document.getElementById('invite-email-btn');
-  if(inviteEmailBtn) inviteEmailBtn.onclick = () => {
-    const emailInput = document.getElementById('invite-email-input');
-    const email = emailInput ? emailInput.value.trim() : '';
-    const code = state.inviteRole === 'edit' ? codes.edit : codes.view;
-    const roleText = state.inviteRole === 'edit' ? 'administrateur (peut ajouter des repas)' : 'lecture seule (consultation)';
-    const appUrl = location.origin + location.pathname;
-    const subject = encodeURIComponent('Invitation à Petites Cuillères');
-    const body = encodeURIComponent(
-      `Salut !\n\nJe t'invite à rejoindre le planning de ${planningData.babyName || 'bébé'} sur Petites Cuillères.\n\n` +
-      `1. Ouvre ${appUrl}\n2. Crée un compte (ou connecte-toi)\n3. Choisis "Rejoindre avec un code"\n\n` +
-      `Ton code d'accès (${roleText}) :\n${code}\n\nÀ bientôt !`
-    );
-    window.location.href = `mailto:${email}?subject=${subject}&body=${body}`;
+  const grantBtn = document.getElementById('grant-access-btn');
+  if(grantBtn) grantBtn.onclick = async () => {
+    const input = document.getElementById('grant-identifier-input');
+    const identifier = input ? input.value.trim() : '';
+    state.grantBusy = true; state.grantError = null; render();
+    const result = await grantAccess(state.planningId, identifier, state.inviteRole);
+    state.grantBusy = false;
+    if(!result.ok){ state.grantError = result.error; render(); return; }
+    state.grantError = null;
+    planningMembersForId = null;
+    render();
+    await loadPlanningMembersIfNeeded();
   };
 
-  const inviteSmsBtn = document.getElementById('invite-sms-btn');
-  if(inviteSmsBtn) inviteSmsBtn.onclick = () => {
-    const phoneInput = document.getElementById('invite-phone-input');
-    const phone = phoneInput ? phoneInput.value.trim() : '';
-    const code = state.inviteRole === 'edit' ? codes.edit : codes.view;
-    const appUrl = location.origin + location.pathname;
-    const text = encodeURIComponent(
-      `Je t'invite à rejoindre le planning de ${planningData.babyName || 'bébé'} sur Petites Cuillères : ${appUrl} — ton code d'accès : ${code}`
-    );
-    window.location.href = `sms:${phone}?body=${text}`;
-  };
-
-  document.querySelectorAll('.copy-code-btn').forEach(btn => {
+  document.querySelectorAll('[data-revokeuid]').forEach(btn => {
     btn.onclick = async () => {
-      const code = btn.dataset.copy;
-      if(!code) return;
-      try{ await navigator.clipboard.writeText(code); }
-      catch(e){
-        const ta = document.createElement('textarea');
-        ta.value = code; document.body.appendChild(ta); ta.select();
-        try{ document.execCommand('copy'); }catch(e2){}
-        document.body.removeChild(ta);
-      }
-      const original = btn.innerHTML;
-      btn.innerHTML = ICON_CHECK;
-      setTimeout(() => { btn.innerHTML = original; }, 1500);
+      if(!confirm("Retirer l'accès de cette personne à ce planning ?")) return;
+      await revokeAccess(state.planningId, btn.dataset.revokeuid);
+      planningMembersForId = null;
+      render();
+      await loadPlanningMembersIfNeeded();
     };
   });
 
@@ -1650,6 +1684,14 @@ document.addEventListener('focusin', (e) => {
   }
 });
 
+async function loadUserProfile(){
+  if(!auth.currentUser) return;
+  try{
+    const doc = await db.collection('users').doc(auth.currentUser.uid).get();
+    state.userProfile = doc.exists ? doc.data() : null;
+  }catch(e){ console.error('Erreur chargement profil', e); state.userProfile = null; }
+}
+
 auth.getRedirectResult().catch((e) => {
   if(e && e.code){ state.authError = authErrorMessage(e); render(); }
 });
@@ -1659,8 +1701,10 @@ auth.onAuthStateChanged(async (user) => {
   state.authLoading = false;
   if(user){
     state.authBusy = false;
+    await loadUserProfile();
     await loadLocal();
   } else {
+    state.userProfile = null;
     state.loading = false;
     render();
   }
