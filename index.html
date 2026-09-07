@@ -369,6 +369,14 @@ async function loadLocal(){
     }
   }catch(e){}
   await refreshKnownPlanningsFromMemberships();
+  // Le planning "actif" est mémorisé sur l'appareil, pas par compte : si ce
+  // compte n'a en réalité aucun accès dessus (ex: nouveau compte sur un
+  // appareil qui a servi à un autre compte avant), on l'ignore.
+  if(state.planningId && !state.knownPlannings.some(p => p.planningId === state.planningId)){
+    state.planningId = null;
+    state.role = null;
+    try{ await storageAPI.delete('my-planning', false); }catch(e){}
+  }
   state.loading = false;
   await refreshPlanning();
   render();
