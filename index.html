@@ -219,7 +219,7 @@ const state = {
   loading: true,
   user: null,
   authLoading: true,
-  authMode: 'login', // 'login' | 'signup'
+  authScreen: 'landing', // 'landing' | 'login' | 'signup'
   authError: null,
   authBusy: false
 };
@@ -467,10 +467,16 @@ function authErrorMessage(e){
     'auth/user-not-found': 'Aucun compte avec cet email.',
     'auth/wrong-password': 'Mot de passe incorrect.',
     'auth/invalid-credential': 'Email ou mot de passe incorrect.',
-    'auth/too-many-requests': 'Trop de tentatives, réessaie dans quelques minutes.'
+    'auth/too-many-requests': 'Trop de tentatives, réessaie dans quelques minutes.',
+    'auth/unauthorized-domain': "Ce site n'est pas encore autorisé pour la connexion Google (Firebase Console > Authentication > Settings > Authorized domains).",
+    'auth/operation-not-allowed': "La connexion Google n'est pas activée sur ce projet (Firebase Console > Authentication > Sign-in method).",
+    'auth/network-request-failed': 'Problème de connexion internet, réessaie.'
   };
   if(e && e.code === 'auth/popup-closed-by-user') return null;
-  return (e && map[e.code]) || "Une erreur est survenue, réessaie.";
+  console.error('Erreur auth', e);
+  if(e && map[e.code]) return map[e.code];
+  if(e && e.code) return `Une erreur est survenue (${e.code}). Réessaie.`;
+  return "Une erreur est survenue, réessaie.";
 }
 
 async function signUpWithEmail(email, password){
@@ -641,12 +647,31 @@ if(window.visualViewport){
 }
 
 function renderAuthGate(){
-  const isSignup = state.authMode === 'signup';
+  if(state.authScreen === 'login') return renderAuthForm(false);
+  if(state.authScreen === 'signup') return renderAuthForm(true);
+  return renderAuthLanding();
+}
+
+function renderAuthLanding(){
   return `
-    <div style="min-height:100vh;display:flex;flex-direction:column;padding:3rem 1.5rem 2rem;">
-      <div style="width:140px;color:var(--primary);margin:0 auto 2rem;">${ICON_LOGO_WORDMARK}</div>
-      <div class="title-font" style="font-size:22px;color:var(--text);margin-bottom:4px;text-align:center;">${isSignup ? 'Créer un compte' : 'Se connecter'}</div>
-      <div style="font-size:16px;color:var(--text-secondary);margin-bottom:1.75rem;text-align:center;">${isSignup ? 'Pour créer ou rejoindre un planning' : 'Content de te revoir'}</div>
+    <div style="min-height:100vh;display:flex;flex-direction:column;padding:2.5rem 1.5rem 2rem;">
+      <div style="flex:1;display:flex;align-items:center;justify-content:center;">
+        <div style="width:230px;color:var(--primary);">${ICON_LOGO_WORDMARK}</div>
+      </div>
+      <div style="width:100%;">
+        <button class="btn btn-primary" id="goto-signup-btn" style="margin-bottom:10px;color:#FFFFFF;">Créer un compte</button>
+        <button class="btn btn-outline" id="goto-login-btn">Me connecter</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderAuthForm(isSignup){
+  return `
+    <div style="min-height:100vh;display:flex;flex-direction:column;padding:2rem 1.5rem 2rem;">
+      <button id="auth-back-btn" aria-label="Retour" style="background:none;border:none;padding:8px;margin:-8px -8px 0.5rem;align-self:flex-start;color:var(--text);cursor:pointer;">${ICON_BACK}</button>
+      <div style="width:120px;color:var(--primary);margin:0 auto 1.75rem;">${ICON_LOGO_WORDMARK}</div>
+      <div class="title-font" style="font-size:22px;color:var(--text);margin-bottom:1.75rem;text-align:center;">${isSignup ? 'Créer un compte' : 'Se connecter'}</div>
 
       ${state.authError ? `<p class="error-text" style="text-align:center;margin-bottom:14px;">${state.authError}</p>` : ''}
 
@@ -658,11 +683,11 @@ function renderAuthGate(){
         <label>Mot de passe</label>
         <input type="password" id="auth-password-input" placeholder="••••••••" autocomplete="${isSignup ? 'new-password' : 'current-password'}" />
       </div>
-      ${!isSignup ? `<button class="btn btn-ghost" id="forgot-password-btn" style="align-self:flex-start;margin:-6px 0 10px;padding:0;">Mot de passe oublié ?</button>` : ''}
 
-      <button class="btn btn-primary" id="auth-submit-btn" style="color:#FFFFFF;margin-top:6px;" ${state.authBusy ? 'disabled' : ''}>
+      <button class="btn btn-primary" id="auth-submit-btn" style="color:#FFFFFF;" ${state.authBusy ? 'disabled' : ''}>
         ${state.authBusy ? '...' : (isSignup ? 'Créer mon compte' : 'Se connecter')}
       </button>
+      ${!isSignup ? `<button class="btn btn-ghost" id="forgot-password-btn" style="margin:4px auto 0;">Mot de passe oublié ?</button>` : ''}
 
       <div style="display:flex;align-items:center;gap:10px;margin:1.25rem 0;">
         <div style="flex:1;height:1px;background:var(--border);"></div>
@@ -682,19 +707,26 @@ function renderAuthGate(){
 }
 
 function attachAuthEvents(){
+  const signupBtn = document.getElementById('goto-signup-btn');
+  if(signupBtn) signupBtn.onclick = () => { state.authScreen = 'signup'; state.authError = null; render(); };
+  const loginBtn = document.getElementById('goto-login-btn');
+  if(loginBtn) loginBtn.onclick = () => { state.authScreen = 'login'; state.authError = null; render(); };
+  const backBtn = document.getElementById('auth-back-btn');
+  if(backBtn) backBtn.onclick = () => { state.authScreen = 'landing'; state.authError = null; render(); };
+
   const submitBtn = document.getElementById('auth-submit-btn');
   if(submitBtn) submitBtn.onclick = () => {
     const email = document.getElementById('auth-email-input').value.trim();
     const password = document.getElementById('auth-password-input').value;
     if(!email || !password){ state.authError = 'Remplis les deux champs.'; render(); return; }
-    if(state.authMode === 'signup') signUpWithEmail(email, password);
+    if(state.authScreen === 'signup') signUpWithEmail(email, password);
     else logInWithEmail(email, password);
   };
   const googleBtn = document.getElementById('google-signin-btn');
   if(googleBtn) googleBtn.onclick = () => signInWithGoogle();
   const toggleBtn = document.getElementById('toggle-auth-mode-btn');
   if(toggleBtn) toggleBtn.onclick = () => {
-    state.authMode = state.authMode === 'signup' ? 'login' : 'signup';
+    state.authScreen = state.authScreen === 'signup' ? 'login' : 'signup';
     state.authError = null;
     render();
   };
