@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=resizes-content">
 <title>Petites Cuillères</title>
 <link rel="manifest" href="manifest.json">
-<meta name="theme-color" content="#060731">
+<meta name="theme-color" content="#FAF3F5">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -106,12 +106,12 @@
   }
   textarea{ height:auto; border-radius:24px; padding:14px 18px; }
   input[type="date"]::-webkit-calendar-picker-indicator{
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='20' height='20' fill='none' stroke='%23C6C5DA' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='20' height='20' fill='none' stroke='%23B4B5C1' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
     background-position: center;
     width: 20px;
     height: 20px;
-    margin-right: 2px;
+    margin-right: 12px;
     cursor: pointer;
     opacity: 1;
   }
@@ -900,17 +900,14 @@ function renderCreateForm(){
   const hasBack = state.knownPlannings.length > 0;
   const photoStyle = createPhoto ? `background-image:url('${createPhoto}');background-size:cover;background-position:center;` : '';
   return `
-    <div style="padding:1.5rem 1.25rem 0;">
-      <div class="title-font" style="font-size:30px;color:var(--text);margin-bottom:14px;text-align:center;">À propos de bébé</div>
-    </div>
-    <div class="top-header" style="justify-content:center;">
+    <div class="top-header" style="justify-content:center;padding-top:2rem;">
       <div style="display:flex;flex-direction:column;align-items:center;">
-        <button id="create-photo-btn" class="avatar" aria-label="Ajouter une photo de bébé" style="width:84px;height:84px;font-size:32px;border:none;cursor:pointer;overflow:hidden;display:flex;align-items:center;justify-content:center;color:var(--accent);${photoStyle || 'background:var(--accent-light);'}">${createPhoto ? '' : ICON_BABY_SILHOUETTE}</button>
+        <button id="create-photo-btn" class="avatar" aria-label="Ajouter une photo de bébé" style="width:130px;height:130px;font-size:52px;border:none;cursor:pointer;overflow:hidden;display:flex;align-items:center;justify-content:center;color:var(--accent);${photoStyle || 'background:var(--accent-light);'}">${createPhoto ? '' : ICON_BABY_SILHOUETTE}</button>
         <input type="file" id="create-photo-input" accept="image/*" style="display:none;" />
         <div style="font-size:14px;color:var(--text-muted);margin-top:8px;">Touche pour ajouter une photo</div>
       </div>
     </div>
-    <div class="screen" style="padding-top:0.5rem;">
+    <div class="screen" style="padding-top:1rem;">
       ${hasBack ? `<button class="header-icon-btn" id="back-btn" style="margin:0 0 1rem -6px;padding:0;opacity:1;" aria-label="Retour">${ICON_BACK}</button>` : ''}
       <div class="field">
         <label>Prénom</label>
