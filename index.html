@@ -66,7 +66,7 @@
   #app{
     max-width:420px;
     margin:0 auto;
-    min-height:100vh;
+    min-height:100vh;min-height:100dvh;
     background:var(--bg);
     display:flex;
     flex-direction:column;
@@ -754,7 +754,7 @@ function getMealReactions(m){
 
 function renderSplash(){
   return `
-    <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--primary);">
+    <div style="min-height:100vh;min-height:100dvh;display:flex;align-items:center;justify-content:center;background:var(--primary);">
       <div style="width:180px;color:#FFFFFF;">${ICON_LOGO_WORDMARK}</div>
     </div>
   `;
@@ -762,7 +762,7 @@ function renderSplash(){
 
 function renderPseudoStep(){
   return `
-    <div style="min-height:100vh;display:flex;flex-direction:column;padding:2.5rem 1.5rem 2rem;">
+    <div style="min-height:100vh;min-height:100dvh;display:flex;flex-direction:column;padding:2.5rem 1.5rem 2rem;">
       <div style="width:140px;color:var(--primary);margin:0 auto 2rem;">${ICON_LOGO_WORDMARK}</div>
       <div class="title-font" style="font-size:22px;color:var(--text);margin-bottom:8px;text-align:center;">Comment veux-tu qu'on t'appelle ?</div>
       <p style="font-size:16px;color:var(--text-secondary);text-align:center;margin:0 0 1.75rem;">Ce nom sera visible par les autres personnes qui partagent un planning avec toi.</p>
@@ -835,7 +835,7 @@ function renderAuthGate(){
 
 function renderAuthLanding(){
   return `
-    <div style="min-height:100vh;display:flex;flex-direction:column;padding:2.5rem 1.5rem 2rem;">
+    <div style="min-height:100vh;min-height:100dvh;display:flex;flex-direction:column;padding:2.5rem 1.5rem 2rem;">
       <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;">
         <div style="width:230px;color:var(--primary);">${ICON_LOGO_WORDMARK}</div>
         <p style="font-size:16px;color:var(--text-secondary);text-align:center;margin:1.25rem 0 0;max-width:280px;">Le carnet de la diversification alimentaire de bébé, à partager en famille.</p>
@@ -852,7 +852,7 @@ function renderAuthLanding(){
 function renderAuthForm(isSignup){
   const isPhone = state.authMethod === 'phone';
   return `
-    <div style="min-height:100vh;display:flex;flex-direction:column;padding:2rem 1.5rem 2rem;">
+    <div style="min-height:100vh;min-height:100dvh;display:flex;flex-direction:column;padding:2rem 1.5rem 2rem;">
       <button id="auth-back-btn" aria-label="Retour" ${state.authBusy ? 'disabled style="opacity:0.3;background:none;border:none;padding:8px;margin:-8px -8px 0.5rem;align-self:flex-start;color:var(--text);"' : 'style="background:none;border:none;padding:8px;margin:-8px -8px 0.5rem;align-self:flex-start;color:var(--text);cursor:pointer;"'}>${ICON_BACK}</button>
       <div style="width:120px;color:var(--primary);margin:0 auto 1.5rem;">${ICON_LOGO_WORDMARK}</div>
       <div class="title-font" style="font-size:22px;color:var(--text);margin-bottom:1.25rem;text-align:center;">${isSignup ? 'Créer un compte' : 'Se connecter'}</div>
@@ -974,7 +974,7 @@ function renderWelcome(){
 // l'argumentaire marketing à chaque ouverture.
 function renderWelcomeReturning(){
   return `
-    <div style="min-height:100vh;display:flex;flex-direction:column;padding:2.5rem 1.5rem 2rem;">
+    <div style="min-height:100vh;min-height:100dvh;display:flex;flex-direction:column;padding:2.5rem 1.5rem 2rem;">
       <div style="width:100px;color:var(--primary);margin:0 auto 2rem;">${ICON_LOGO_WORDMARK}</div>
       <div class="title-font" style="font-size:22px;color:var(--text);margin-bottom:14px;">Tes bébés</div>
       <div style="width:100%;">
