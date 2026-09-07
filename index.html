@@ -219,6 +219,7 @@ const state = {
   authLoading: true,
   authScreen: 'landing', // 'landing' | 'login' | 'signup'
   authMethod: 'email', // 'email' | 'phone'
+  needsPseudo: false,
   userProfile: null,
   inviteRole: 'view', // 'edit' | 'view' — rôle sélectionné pour donner un accès
   grantError: null,
@@ -467,14 +468,30 @@ async function saveUserProfile(fields){
 async function ensureMembership(planningId, role, identifier){
   if(!auth.currentUser || !planningId || !role) return;
   const norm = normalizeIdentifier(identifier || auth.currentUser.email || '');
+  const pseudo = (state.userProfile && state.userProfile.pseudo) || '';
   try{
     await db.collection('memberships').doc(auth.currentUser.uid).collection('plannings').doc(planningId).set({
       role, planningId, updatedAt: firebase.firestore.FieldValue.serverTimestamp()
     });
     await db.collection('planningMembers').doc(planningId).collection('members').doc(auth.currentUser.uid).set({
-      role, identifier: norm, updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      role, identifier: norm, pseudo, updatedAt: firebase.firestore.FieldValue.serverTimestamp()
     });
   }catch(e){ console.error('Erreur création accès', e); }
+}
+
+// Enregistre le pseudo choisi à l'inscription, puis reprend le fil normal
+// (chargement des accès) — et met à jour l'affichage de ce compte sur les
+// plannings auxquels il a déjà accès.
+async function submitPseudo(pseudo){
+  await saveUserProfile({ pseudo });
+  state.needsPseudo = false;
+  await loadUserProfile();
+  await loadLocal();
+  for(const p of state.knownPlannings){
+    try{
+      await db.collection('planningMembers').doc(p.planningId).collection('members').doc(auth.currentUser.uid).set({ pseudo }, { merge: true });
+    }catch(e){}
+  }
 }
 
 // Donne accès à ce planning à la personne identifiée par cet email ou ce
@@ -702,10 +719,37 @@ function renderSplash(){
   `;
 }
 
+function renderPseudoStep(){
+  return `
+    <div style="min-height:100vh;display:flex;flex-direction:column;padding:2.5rem 1.5rem 2rem;">
+      <div style="width:140px;color:var(--primary);margin:0 auto 2rem;">${ICON_LOGO_WORDMARK}</div>
+      <div class="title-font" style="font-size:22px;color:var(--text);margin-bottom:8px;text-align:center;">Comment veux-tu qu'on t'appelle ?</div>
+      <p style="font-size:16px;color:var(--text-secondary);text-align:center;margin:0 0 1.75rem;">Ce nom sera visible par les autres personnes qui partagent un planning avec toi.</p>
+      <div class="field">
+        <label>Prénom ou pseudo</label>
+        <input type="text" id="pseudo-input" placeholder="Ex : Maman, Léo, Mamie..." autocomplete="nickname" />
+      </div>
+      <button class="btn btn-primary" id="submit-pseudo-btn" style="color:#FFFFFF;margin-top:0.5rem;">Continuer</button>
+    </div>
+  `;
+}
+
+function attachPseudoEvents(){
+  const btn = document.getElementById('submit-pseudo-btn');
+  const input = document.getElementById('pseudo-input');
+  if(btn) btn.onclick = async () => {
+    const val = input ? input.value.trim() : '';
+    if(!val){ input.focus(); return; }
+    btn.disabled = true; btn.textContent = '...';
+    await submitPseudo(val);
+  };
+}
+
 function render(){
   const app = document.getElementById('app');
   if(state.authLoading || state.loading){ app.innerHTML = renderSplash(); return; }
   if(!state.user){ app.innerHTML = renderAuthGate(); attachAuthEvents(); return; }
+  if(state.needsPseudo){ app.innerHTML = renderPseudoStep(); attachPseudoEvents(); return; }
   if(!state.planningId){ app.innerHTML = renderWelcome(); attachWelcomeEvents(); return; }
 
   app.innerHTML = renderMain();
@@ -929,6 +973,7 @@ function renderCreateForm(){
         <p class="error-text" id="gender-error" style="display:none;">Sélectionne le sexe de bébé</p>
       </div>
       <button class="btn btn-primary" id="submit-create" style="margin-top:0.5rem;">Créer le planning</button>
+      <button class="btn btn-ghost" id="skip-create-btn" style="margin-top:0.75rem;">On m'a déjà donné accès à un bébé</button>
     </div>
   `;
 }
@@ -1267,7 +1312,7 @@ function renderPartageTab(){
     ? (planningMembers.length ? planningMembers.map(m => `
         <div class="card" style="display:flex;align-items:center;justify-content:space-between;">
           <div style="min-width:0;">
-            <div style="font-weight:600;font-size:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${m.identifier || 'Compte'}${m.uid === myUid ? ' (toi)' : ''}</div>
+            <div style="font-weight:600;font-size:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${m.pseudo || m.identifier || 'Compte'}${m.uid === myUid ? ' (toi)' : ''}</div>
             <div style="font-size:14px;color:var(--text-secondary);">${m.role === 'edit' ? 'Administrateur' : 'Lecture seule'}</div>
           </div>
           ${m.uid !== myUid ? `<button class="header-icon-btn" data-revokeuid="${m.uid}" aria-label="Retirer l'accès" style="opacity:0.7;flex-shrink:0;">${ICON_TRASH}</button>` : ''}
@@ -1360,6 +1405,19 @@ function attachWelcomeEvents(){
   const back = document.getElementById('back-btn');
   if(c) c.onclick = () => { state.showCreate = true; render(); };
   if(back) back.onclick = () => { state.showCreate = false; render(); };
+
+  const skipBtn = document.getElementById('skip-create-btn');
+  if(skipBtn) skipBtn.onclick = async () => {
+    skipBtn.textContent = 'Vérification...';
+    await refreshKnownPlanningsFromMemberships();
+    if(state.knownPlannings.length > 0){
+      state.showCreate = false;
+      render();
+    } else {
+      alert("Toujours aucun accès trouvé pour ce compte. Vérifie que la personne qui t'a invité a bien utilisé le même email/numéro que celui avec lequel tu es connecté.");
+      skipBtn.textContent = "On m'a déjà donné accès à un bébé";
+    }
+  };
 
   document.querySelectorAll('[data-switchid]').forEach(btn => {
     btn.onclick = async () => {
@@ -1750,6 +1808,10 @@ auth.onAuthStateChanged(async (user) => {
       await registerUserLookup(identifier);
       await saveUserProfile(method === 'phone' ? { phone: identifier, method } : { email: identifier, method });
       await consumePendingInvites(identifier);
+      state.needsPseudo = true;
+      state.loading = false;
+      render();
+      return;
     }
     await loadUserProfile();
     await loadLocal();
