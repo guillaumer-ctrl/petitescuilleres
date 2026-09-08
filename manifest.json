@@ -1,4 +1,5 @@
 {
+  "id": "/",
   "name": "Petites Cuillères",
   "short_name": "P. Cuillères",
   "description": "Le carnet de la diversification alimentaire de bébé",
@@ -8,6 +9,7 @@
   "orientation": "portrait",
   "background_color": "#FAF3F5",
   "theme_color": "#FAF3F5",
+  "categories": ["parenting", "lifestyle", "health"],
   "icons": [
     {
       "src": "icon-192.png",
