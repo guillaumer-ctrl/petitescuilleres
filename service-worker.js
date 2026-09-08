@@ -1,11 +1,13 @@
-const CACHE_NAME = "petites-cuilleres-v5";
+const CACHE_NAME = "petites-cuilleres-v6";
 const FILES_TO_CACHE = [
   "./",
   "./index.html",
   "./manifest.json",
   "./icon-192.png",
   "./icon-512.png",
-  "./apple-touch-icon.png"
+  "./apple-touch-icon.png",
+  "./cgu.html",
+  "./confidentialite.html"
 ];
 
 // Installation : on met en cache les fichiers essentiels

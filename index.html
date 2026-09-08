@@ -406,7 +406,22 @@ async function switchPlanning(planningId, role){
   render();
 }
 
+async function isOnlyAdmin(planningId, uid){
+  try{
+    const snap = await db.collection('planningMembers').doc(planningId).collection('members').get();
+    return !snap.docs.some(d => d.id !== uid && d.data().role === 'edit');
+  }catch(e){ console.error('Erreur vérification administrateurs', e); return false; }
+}
+
 async function forgetPlanning(planningId){
+  const entry = state.knownPlannings.find(p => p.planningId === planningId);
+  if(entry && entry.role === 'edit' && auth.currentUser){
+    const alone = await isOnlyAdmin(planningId, auth.currentUser.uid);
+    if(alone){
+      alert("Tu es le seul administrateur de ce planning. Donne d'abord l'accès Administrateur à quelqu'un d'autre (dans Paramètres) avant de pouvoir le quitter — sinon plus personne ne pourrait jamais y accéder.");
+      return;
+    }
+  }
   if(auth.currentUser){
     await revokeAccess(planningId, auth.currentUser.uid);
   }
@@ -458,7 +473,8 @@ function normalizePhone(phone){
   let digits = (phone || '').replace(/[^\d+]/g, '');
   if(digits.startsWith('+')) digits = '+' + digits.slice(1).replace(/\D/g, '');
   else digits = digits.replace(/\D/g, '');
-  if(digits.startsWith('0')) digits = '+33' + digits.slice(1);
+  if(digits.startsWith('00')) digits = '+' + digits.slice(2);
+  else if(digits.startsWith('0')) digits = '+33' + digits.slice(1);
   else if(!digits.startsWith('+')) digits = '+' + digits;
   return digits;
 }
@@ -864,6 +880,7 @@ function renderAuthLanding(){
       <div style="width:100%;">
         <button class="btn btn-primary" id="goto-signup-btn" style="margin-bottom:10px;color:#FFFFFF;">Créer un compte</button>
         <button class="btn btn-outline" id="goto-login-btn">Me connecter</button>
+        <p style="font-size:13px;color:var(--text-muted);text-align:center;margin:14px 0 0;">En continuant, tu acceptes les <a href="./cgu.html" style="color:var(--text-muted);">CGU</a> et la <a href="./confidentialite.html" style="color:var(--text-muted);">politique de confidentialité</a>.</p>
       </div>
     </div>
   `;
@@ -1174,10 +1191,19 @@ function renderBabySwitcherModal(){
   `;
 }
 
+function renderAdSlot(){
+  return `
+    <div class="card" style="border:1.5px dashed var(--border);background:transparent;text-align:center;padding:1.5rem;">
+      <div style="font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Publicité</div>
+      <div style="font-size:14px;color:var(--text-muted);">Emplacement réservé — à connecter à un réseau publicitaire (ex : Google AdSense)</div>
+    </div>
+  `;
+}
+
 function renderPlanningTab(){
   const futurs = planningData.meals.filter(m => m.statut === 'futur').sort((a,b)=> (a.date+a.heure).localeCompare(b.date+b.heure));
   if(futurs.length === 0){
-    return `<p style="text-align:center;color:var(--text-muted);font-size:16px;margin-top:2rem;">Aucun repas planifié pour l'instant.</p>`;
+    return `<p style="text-align:center;color:var(--text-muted);font-size:16px;margin-top:2rem;">Aucun repas planifié pour l'instant.</p>` + renderAdSlot();
   }
   return futurs.map(m => {
     return `
@@ -1189,7 +1215,7 @@ function renderPlanningTab(){
       </div>
       ${state.role === 'edit' ? `<button class="edit-meal-btn" data-editid="${m.id}" style="background:none;border:none;font-size:16px;color:var(--text-secondary);text-decoration:underline;white-space:nowrap;padding:0;flex-shrink:0;">Modifier</button>` : ''}
     </div>
-  `}).join('');
+  `}).join('') + renderAdSlot();
 }
 
 function renderHistoriqueTab(){
@@ -1406,9 +1432,10 @@ function renderPartageTab(){
     </div>
     ${state.editingPseudo ? renderPseudoEditModal() : ''}
   `;
+  const legalLinks = `<p style="text-align:center;font-size:13px;color:var(--text-muted);margin-top:2rem;"><a href="./cgu.html" style="color:var(--text-muted);">CGU</a> · <a href="./confidentialite.html" style="color:var(--text-muted);">Confidentialité</a></p>`;
 
   if(state.role !== 'edit'){
-    return pseudoSection + `<p style="text-align:center;color:var(--text-muted);font-size:16px;margin-top:2rem;">Seul un administrateur peut gérer les accès de ce planning.</p>`;
+    return pseudoSection + `<p style="text-align:center;color:var(--text-muted);font-size:16px;margin-top:2rem;">Seul un administrateur peut gérer les accès de ce planning.</p>` + legalLinks;
   }
   const myUid = auth.currentUser && auth.currentUser.uid;
   const membersHtml = planningMembersForId === state.planningId
@@ -1442,7 +1469,7 @@ function renderPartageTab(){
 
     <label style="display:block;margin:1.5rem 0 10px;">Personnes ayant accès</label>
     ${membersHtml}
-  `;
+  ` + legalLinks;
 }
 
 function renderPseudoEditModal(){
