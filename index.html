@@ -1191,23 +1191,13 @@ function renderBabySwitcherModal(){
   `;
 }
 
-function renderAdSlot(){
-  return `
-    <div class="card" style="border:1.5px dashed var(--border);background:transparent;text-align:center;padding:1.5rem;">
-      <div style="font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Publicité</div>
-      <div style="font-size:14px;color:var(--text-muted);">Emplacement réservé — à connecter à un réseau publicitaire (ex : Google AdSense)</div>
-    </div>
-  `;
-}
-
 function renderPlanningTab(){
   const futurs = planningData.meals.filter(m => m.statut === 'futur').sort((a,b)=> (a.date+a.heure).localeCompare(b.date+b.heure));
   if(futurs.length === 0){
-    return `<p style="text-align:center;color:var(--text-muted);font-size:16px;margin-top:2rem;">Aucun repas planifié pour l'instant.</p>` + renderAdSlot();
+    return `<p style="text-align:center;color:var(--text-muted);font-size:16px;margin-top:2rem;">Aucun repas planifié pour l'instant.</p>`;
   }
-  const AD_EVERY = 4;
-  const html = futurs.map((m, idx) => {
-    const card = `
+  return futurs.map(m => {
+    return `
     <div class="card" style="display:flex;align-items:center;gap:12px;">
       <div style="flex:1;min-width:0;">
         <div style="font-size:16px;font-style:italic;color:var(--text-secondary);">${fmtDate(m.date)}, ${m.heure}</div>
@@ -1215,23 +1205,19 @@ function renderPlanningTab(){
         <div style="font-size:16px;color:var(--text-secondary);margin-top:2px;">${m.aliments}</div>
       </div>
       ${state.role === 'edit' ? `<button class="edit-meal-btn" data-editid="${m.id}" style="background:none;border:none;font-size:16px;color:var(--text-secondary);text-decoration:underline;white-space:nowrap;padding:0;flex-shrink:0;">Modifier</button>` : ''}
-    </div>`;
-    const ad = ((idx + 1) % AD_EVERY === 0) ? renderAdSlot() : '';
-    return card + ad;
-  }).join('');
-  return html + (futurs.length % AD_EVERY === 0 ? '' : renderAdSlot());
+    </div>
+  `}).join('');
 }
 
 function renderHistoriqueTab(){
   const passes = planningData.meals.filter(m => m.statut === 'passe').sort((a,b)=> (b.date+b.heure).localeCompare(a.date+a.heure));
   if(passes.length === 0){
-    return `<p style="text-align:center;color:var(--text-muted);font-size:16px;margin-top:2rem;">Aucun repas enregistré pour l'instant.</p>` + renderAdSlot();
+    return `<p style="text-align:center;color:var(--text-muted);font-size:16px;margin-top:2rem;">Aucun repas enregistré pour l'instant.</p>`;
   }
-  const AD_EVERY = 4;
-  const html = passes.map((m, idx) => {
+  return passes.map(m => {
     const foods = getMealFoods(m);
     const reactions = getMealReactions(m);
-    const card = `
+    return `
     <div class="card">
       <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:2px;">
         <div>
@@ -1255,11 +1241,8 @@ function renderHistoriqueTab(){
           </div>
         `;
       }).join('')}
-    </div>`;
-    const ad = ((idx + 1) % AD_EVERY === 0) ? renderAdSlot() : '';
-    return card + ad;
-  }).join('');
-  return html + (passes.length % AD_EVERY === 0 ? '' : renderAdSlot());
+    </div>
+  `}).join('');
 }
 
 function renderStatsTab(){
@@ -1325,7 +1308,6 @@ function renderStatsTab(){
     ${reactionCardsHtml}
     <p style="font-size:16px;color:var(--text-secondary);margin:1.25rem 0 0.75rem;font-weight:600;">Aliments essayés par catégorie</p>
     ${catRowsHtml}
-    ${renderAdSlot()}
   `;
 }
 
