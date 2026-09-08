@@ -105,16 +105,17 @@
     background:var(--card);
   }
   textarea{ height:auto; border-radius:24px; padding:14px 18px; }
-  input[type="date"]::-webkit-calendar-picker-indicator,
-  input[type="time"]::-webkit-calendar-picker-indicator{
+  input[type="date"],
+  input[type="time"]{
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='20' height='20' fill='none' stroke='%23B4B5C1' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
-    background-position: center;
-    width: 20px;
-    height: 20px;
-    margin-right: 18px;
+    background-position: right 18px center;
+    padding-right: 48px;
+  }
+  input[type="date"]::-webkit-calendar-picker-indicator,
+  input[type="time"]::-webkit-calendar-picker-indicator{
+    opacity: 0;
     cursor: pointer;
-    opacity: 1;
   }
   select{
     -webkit-appearance: none;
