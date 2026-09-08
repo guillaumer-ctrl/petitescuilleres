@@ -181,12 +181,6 @@
   }
 
   .error-text{ color:var(--danger-text); margin:4px 0 0; }
-  .code-box{
-    background:var(--primary-light); color:var(--primary-text);
-    font-weight:600; letter-spacing:2px; text-align:center;
-    padding:14px; border-radius:24px; margin-bottom:10px;
-  }
-  .muted-note{ color:var(--text-muted); margin-top:6px; }
 
   .top-header{ display:flex; align-items:center; justify-content:space-between; padding:1rem 1.25rem 0.5rem; }
   .avatar{
@@ -1845,6 +1839,13 @@ function attachMainEvents(){
   if(overlay){
     overlay.onclick = (e) => { if(e.target.id === 'modal-overlay'){ state.showModal = false; editingMealId = null; render(); } };
     document.getElementById('close-modal').onclick = () => { state.showModal = false; editingMealId = null; render(); };
+
+    const HEURE_PAR_MOMENT = { 'Petit-déjeuner': '08:00', 'Déjeuner': '12:00', 'Goûter': '16:30', 'Dîner': '19:00' };
+    const momentInput = document.getElementById('moment-input');
+    if(momentInput) momentInput.onchange = () => {
+      const heure = HEURE_PAR_MOMENT[momentInput.value];
+      if(heure) document.getElementById('heure-input').value = heure;
+    };
 
     function refreshAlimentChips(){
       const container = document.getElementById('aliment-chips');
