@@ -538,8 +538,13 @@ async function grantAccess(planningId, identifier, role){
   try{
     const lookup = await db.collection('userLookup').doc(norm).get();
     if(!lookup.exists){
-      // Personne n'a encore de compte avec cet identifiant : on enregistre
-      // une invitation en attente, appliquée automatiquement dès son inscription.
+      // Personne n'a encore de compte avec cet identifiant : on vérifie
+      // d'abord qu'elle n'a pas déjà été invitée, puis on enregistre
+      // l'invitation, appliquée automatiquement dès son inscription.
+      const existingInvite = await db.collection('pendingInvites').doc(norm).collection('invites').doc(planningId).get();
+      if(existingInvite.exists){
+        return { ok: false, error: "Cette personne a déjà été invitée sur ce planning." };
+      }
       await db.collection('pendingInvites').doc(norm).collection('invites').doc(planningId).set({
         role, updatedAt: firebase.firestore.FieldValue.serverTimestamp()
       });
@@ -555,7 +560,8 @@ async function grantAccess(planningId, identifier, role){
     return { ok: true, pending: false };
   }catch(e){
     console.error('Erreur attribution accès', e);
-    return { ok: false, error: "Une erreur est survenue, réessaie." };
+    const detail = e && e.code ? ` (${e.code})` : '';
+    return { ok: false, error: `Une erreur est survenue${detail}, réessaie.` };
   }
 }
 
