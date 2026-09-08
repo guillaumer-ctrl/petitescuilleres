@@ -429,8 +429,17 @@ async function refreshPlanning(){
 }
 
 async function savePlanning(){
-  await storageAPI.set('data:' + state.planningId, JSON.stringify(planningData), true);
-  await saveLocal();
+  try{
+    await storageAPI.set('data:' + state.planningId, JSON.stringify(planningData), true);
+    await saveLocal();
+    return true;
+  }catch(e){
+    console.error('Erreur sauvegarde planning', e);
+    await refreshPlanning();
+    render();
+    alert("Cette modification n'a pas pu être enregistrée (droits insuffisants ou connexion coupée). Ce que tu voyais à l'écran a été annulé.");
+    return false;
+  }
 }
 
 // ============================================================
@@ -573,7 +582,8 @@ async function revokeAccess(planningId, uid){
   try{
     await db.collection('planningMembers').doc(planningId).collection('members').doc(uid).delete();
     await db.collection('memberships').doc(uid).collection('plannings').doc(planningId).delete();
-  }catch(e){ console.error('Erreur retrait accès', e); }
+    return true;
+  }catch(e){ console.error('Erreur retrait accès', e); return false; }
 }
 
 async function listPlanningMembers(planningId){
@@ -1762,7 +1772,8 @@ function attachMainEvents(){
   document.querySelectorAll('[data-revokeuid]').forEach(btn => {
     btn.onclick = async () => {
       if(!confirm("Retirer l'accès de cette personne à ce planning ?")) return;
-      await revokeAccess(state.planningId, btn.dataset.revokeuid);
+      const ok = await revokeAccess(state.planningId, btn.dataset.revokeuid);
+      if(!ok){ alert("Le retrait d'accès a échoué, réessaie."); return; }
       planningMembersForId = null;
       render();
       await loadPlanningMembersIfNeeded();
