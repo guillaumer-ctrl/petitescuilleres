@@ -264,6 +264,7 @@ const FOOD_LIST = {
 };
 
 function getCategoryForAliment(name){
+  if(planningData.customCategories && planningData.customCategories[name]) return planningData.customCategories[name];
   for(const cat in FOOD_LIST){
     if(FOOD_LIST[cat].includes(name)) return cat;
   }
@@ -1521,6 +1522,20 @@ function renderAddModal(){
             <input type="text" id="aliment-search-input" placeholder="Rechercher un aliment (ex : fraise)" autocomplete="off" />
             <div id="aliment-suggestions" style="display:none;position:absolute;top:calc(100% + 4px);left:0;right:0;background:var(--card);border:1.5px solid var(--border);border-radius:12px;max-height:220px;overflow-y:auto;z-index:5;"></div>
           </div>
+          <div id="category-picker" style="display:none;margin-top:10px;padding:14px;background:var(--primary-light);border-radius:12px;">
+            <div style="font-size:15px;color:var(--text-secondary);margin-bottom:8px;">Dans quelle catégorie classer <strong id="category-picker-food" style="color:var(--text);"></strong> ?</div>
+            <select id="category-picker-select" style="margin-bottom:10px;">
+              <option value="Légumes">Légumes</option>
+              <option value="Fruits">Fruits</option>
+              <option value="Féculents">Féculents</option>
+              <option value="Viandes">Viandes</option>
+              <option value="Poissons">Poissons</option>
+              <option value="Herbes">Herbes</option>
+              <option value="Épices">Épices</option>
+              <option value="Autres" selected>Autres</option>
+            </select>
+            <button type="button" id="category-picker-confirm" class="btn btn-primary" style="height:38px;font-size:15px;color:#FFFFFF;">Ajouter cet aliment</button>
+          </div>
           <p class="error-text" id="aliments-error" style="display:none;">Ajoute au moins un aliment</p>
         </div>
         <div style="display:flex;gap:10px;margin-top:0.5rem;">
@@ -1889,6 +1904,7 @@ function attachMainEvents(){
       const normalize = s => (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 
       const showSuggestions = () => {
+        document.getElementById('category-picker').style.display = 'none';
         const q = normalize(searchInput.value.trim());
         if(!q){ suggBox.style.display = 'none'; suggBox.innerHTML = ''; return; }
         const matches = FOOD_INDEX.filter(f => normalize(f.name).includes(q) && !modalAliments.includes(f.name)).slice(0, 8);
@@ -1903,12 +1919,20 @@ function attachMainEvents(){
         document.querySelectorAll('.aliment-suggest-btn').forEach(btn => {
           btn.onclick = () => {
             const food = btn.dataset.food;
-            if(food && !modalAliments.includes(food)) modalAliments.push(food);
+            if(!food) return;
+            const isKnown = FOOD_INDEX.some(f => f.name === food);
             searchInput.value = '';
             suggBox.style.display = 'none';
             suggBox.innerHTML = '';
-            refreshAlimentChips();
-            searchInput.focus();
+            if(isKnown){
+              if(!modalAliments.includes(food)) modalAliments.push(food);
+              refreshAlimentChips();
+              searchInput.focus();
+            } else {
+              document.getElementById('category-picker-food').textContent = food;
+              document.getElementById('category-picker').dataset.pendingFood = food;
+              document.getElementById('category-picker').style.display = 'block';
+            }
           };
         });
       };
@@ -1916,6 +1940,20 @@ function attachMainEvents(){
       searchInput.oninput = showSuggestions;
       searchInput.onfocus = showSuggestions;
       searchInput.onblur = () => setTimeout(() => { suggBox.style.display = 'none'; }, 150);
+
+      const categoryPicker = document.getElementById('category-picker');
+      document.getElementById('category-picker-confirm').onclick = () => {
+        const food = categoryPicker.dataset.pendingFood;
+        const category = document.getElementById('category-picker-select').value;
+        if(!food) return;
+        if(!planningData.customCategories) planningData.customCategories = {};
+        planningData.customCategories[food] = category;
+        if(!modalAliments.includes(food)) modalAliments.push(food);
+        categoryPicker.style.display = 'none';
+        categoryPicker.dataset.pendingFood = '';
+        refreshAlimentChips();
+        searchInput.focus();
+      };
     }
 
     document.getElementById('save-meal').onclick = async () => {
