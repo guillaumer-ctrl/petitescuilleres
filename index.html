@@ -231,7 +231,7 @@ const state = {
   needsPseudo: false,
   editingPseudo: false,
   userProfile: null,
-  inviteRole: 'view', // 'edit' | 'view' — rôle sélectionné pour donner un accès
+  inviteRole: null, // 'edit' | 'view' | null — rôle sélectionné pour donner un accès, aucun par défaut
   grantError: null,
   grantSuccessMessage: null,
   grantBusy: false,
@@ -715,7 +715,7 @@ async function logOut(){
   state.authMethod = 'email';
   state.grantError = null;
   state.grantSuccessMessage = null;
-  state.inviteRole = 'view';
+  state.inviteRole = null;
   createGender = null;
   createPhoto = null;
   planningMembers = [];
@@ -1766,6 +1766,7 @@ function attachMainEvents(){
   if(grantBtn) grantBtn.onclick = async () => {
     const input = document.getElementById('grant-identifier-input');
     const identifier = input ? input.value.trim() : '';
+    if(!state.inviteRole){ state.grantError = 'Sélectionne un rôle (Administrateur ou Lecture seule).'; state.grantSuccessMessage = null; render(); return; }
     state.grantBusy = true; state.grantError = null; state.grantSuccessMessage = null; render();
     const result = await grantAccess(state.planningId, identifier, state.inviteRole);
     state.grantBusy = false;
@@ -1774,6 +1775,7 @@ function attachMainEvents(){
     state.grantSuccessMessage = result.pending
       ? "Invitation enregistrée : l'accès sera donné automatiquement dès la création du compte avec cet email/numéro."
       : "Accès donné !";
+    state.inviteRole = null;
     if(!result.pending){ planningMembersForId = null; }
     render();
     await loadPlanningMembersIfNeeded();
