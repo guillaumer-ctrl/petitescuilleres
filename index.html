@@ -1226,14 +1226,12 @@ function renderHistoriqueTab(){
         const r = reactions[food];
         return `
           <div style="margin-bottom:${i < foods.length - 1 ? '12px' : '0'};">
-            <div style="font-size:16px;color:var(--text-secondary);margin-bottom:${state.role==='edit' ? '6px' : '0'};">${food}</div>
-            ${state.role === 'edit' ? `
-              <div class="react-row">
-                <button class="react-btn" data-react="aime" data-id="${m.id}" data-food="${food}" style="${r==='aime' ? `border-color:var(--success-text);background:var(--success-bg);color:var(--success-text);` : ''}">${ICON_REACT_AIME}</button>
-                <button class="react-btn" data-react="mitige" data-id="${m.id}" data-food="${food}" style="${r==='mitige' ? `border-color:var(--warning-text);background:var(--warning-bg);color:var(--warning-text);` : ''}">${ICON_REACT_MITIGE}</button>
-                <button class="react-btn" data-react="allergie" data-id="${m.id}" data-food="${food}" style="${r==='allergie' ? `border-color:var(--danger-text);background:var(--danger-bg);color:var(--danger-text);` : ''}">${ICON_REACT_ALLERGIE}</button>
-              </div>
-            ` : (r ? `<span style="color:${reactionConfig(r).text};display:flex;align-items:center;">${reactionConfig(r).icon}</span>` : '')}
+            <div style="font-size:16px;color:var(--text-secondary);margin-bottom:6px;">${food}</div>
+            <div class="react-row">
+              <button class="react-btn" data-react="aime" data-id="${m.id}" data-food="${food}" aria-label="Aimé" style="${r==='aime' ? `border-color:var(--success-text);background:var(--success-bg);color:var(--success-text);` : ''}">${ICON_REACT_AIME}</button>
+              <button class="react-btn" data-react="mitige" data-id="${m.id}" data-food="${food}" aria-label="Mitigé" style="${r==='mitige' ? `border-color:var(--warning-text);background:var(--warning-bg);color:var(--warning-text);` : ''}">${ICON_REACT_MITIGE}</button>
+              <button class="react-btn" data-react="allergie" data-id="${m.id}" data-food="${food}" aria-label="Allergie suspectée" style="${r==='allergie' ? `border-color:var(--danger-text);background:var(--danger-bg);color:var(--danger-text);` : ''}">${ICON_REACT_ALLERGIE}</button>
+            </div>
           </div>
         `;
       }).join('')}
