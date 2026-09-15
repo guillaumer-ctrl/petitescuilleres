@@ -1,7 +1,11 @@
-const CACHE_NAME = "petites-cuilleres-v6";
+const CACHE_NAME = "petites-cuilleres-v7";
 const FILES_TO_CACHE = [
   "./",
   "./index.html",
+  "./styles.css",
+  "./app.js",
+  "./fonts/AveriaLibre-Regular.ttf",
+  "./fonts/AveriaLibre-Bold.ttf",
   "./manifest.json",
   "./icon-192.png",
   "./icon-512.png",
