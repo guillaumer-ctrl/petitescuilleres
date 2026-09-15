@@ -826,10 +826,10 @@ function attachPseudoEvents(){
 
 function render(){
   const app = document.getElementById('app');
-  if(state.authLoading || state.loading){ app.innerHTML = renderSplash(); return; }
-  if(!state.user){ app.innerHTML = renderAuthGate(); attachAuthEvents(); return; }
-  if(state.needsPseudo){ app.innerHTML = renderPseudoStep(); attachPseudoEvents(); return; }
-  if(!state.planningId){ app.innerHTML = renderWelcome(); attachWelcomeEvents(); return; }
+  if(state.authLoading || state.loading){ app.innerHTML = renderSplash(); clearModalKeyHandler(); return; }
+  if(!state.user){ app.innerHTML = renderAuthGate(); attachAuthEvents(); clearModalKeyHandler(); return; }
+  if(state.needsPseudo){ app.innerHTML = renderPseudoStep(); attachPseudoEvents(); clearModalKeyHandler(); return; }
+  if(!state.planningId){ app.innerHTML = renderWelcome(); attachWelcomeEvents(); clearModalKeyHandler(); return; }
 
   app.innerHTML = renderMain();
   attachMainEvents();
@@ -843,21 +843,49 @@ function render(){
 // Rend les fenetres modales (ajout de repas, changement de bebe, edition de
 // profil/pseudo) utilisables au clavier et par un lecteur d'ecran : role
 // dialog, focus pose sur le premier champ a l'ouverture, fermeture par la
-// touche Echap (via le bouton de fermeture deja present dans chaque modale).
+// touche Echap (via le bouton de fermeture deja present dans chaque modale),
+// et piege de focus (Tab/Maj+Tab restent a l'interieur de la modale tant
+// qu'elle est ouverte, au lieu de sortir sur le contenu derriere).
+// Le gestionnaire precedent est toujours retire avant d'en reposer un,
+// y compris quand aucune modale n'est affichee : sans ca, une mise a jour
+// temps reel recue pendant qu'une modale est ouverte (donc un re-rendu)
+// en accumulerait un nouveau a chaque fois sans jamais nettoyer le premier.
+let modalKeyHandler = null;
+
+function clearModalKeyHandler(){
+  if(!modalKeyHandler) return;
+  document.removeEventListener('keydown', modalKeyHandler);
+  modalKeyHandler = null;
+}
+
 function bindModalA11y(){
+  clearModalKeyHandler();
   const overlay = document.querySelector('.modal-overlay');
   if(!overlay) return;
   overlay.setAttribute('role', 'dialog');
   overlay.setAttribute('aria-modal', 'true');
-  const focusTarget = overlay.querySelector('input, select, textarea, button');
-  if(focusTarget) focusTarget.focus({ preventScroll: true });
-  const onKey = (e) => {
-    if(e.key !== 'Escape') return;
-    document.removeEventListener('keydown', onKey);
-    const closeBtn = overlay.querySelector('.modal-close-btn');
-    if(closeBtn) closeBtn.click();
+  const focusables = Array.from(overlay.querySelectorAll('input, select, textarea, button, a[href]'))
+    .filter(el => !el.disabled && el.tabIndex !== -1);
+  if(focusables.length) focusables[0].focus({ preventScroll: true });
+  modalKeyHandler = (e) => {
+    if(e.key === 'Escape'){
+      const closeBtn = overlay.querySelector('.modal-close-btn');
+      if(closeBtn) closeBtn.click();
+      return;
+    }
+    if(e.key === 'Tab' && focusables.length){
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      if(e.shiftKey && document.activeElement === first){
+        e.preventDefault();
+        last.focus();
+      } else if(!e.shiftKey && document.activeElement === last){
+        e.preventDefault();
+        first.focus();
+      }
+    }
   };
-  document.addEventListener('keydown', onKey);
+  document.addEventListener('keydown', modalKeyHandler);
 }
 
 function fitModalToViewport(){
