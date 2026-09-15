@@ -1,4 +1,4 @@
-const CACHE_NAME = "petites-cuilleres-v10";
+const CACHE_NAME = "petites-cuilleres-v11";
 const FILES_TO_CACHE = [
   "./",
   "./index.html",

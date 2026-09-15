@@ -1572,21 +1572,21 @@ function renderAddModal(){
         <div class="field">
           <label>Moment du repas</label>
           <select id="moment-input">
-            <option>Petit-déjeuner</option>
-            <option>Déjeuner</option>
-            <option>Goûter</option>
-            <option>Dîner</option>
+            <option ${modalMoment === 'Petit-déjeuner' ? 'selected' : ''}>Petit-déjeuner</option>
+            <option ${modalMoment === 'Déjeuner' ? 'selected' : ''}>Déjeuner</option>
+            <option ${modalMoment === 'Goûter' ? 'selected' : ''}>Goûter</option>
+            <option ${modalMoment === 'Dîner' ? 'selected' : ''}>Dîner</option>
           </select>
         </div>
         <div style="display:flex;gap:10px;">
           <div class="field" style="flex:1;">
             <label>Date</label>
-            <input type="date" id="date-input" />
+            <input type="date" id="date-input" value="${escapeHtml(modalDate)}" />
             <p class="error-text" id="date-error" style="display:none;">Indique une date</p>
           </div>
           <div class="field" style="flex:1;">
             <label>Heure</label>
-            <input type="time" id="heure-input" value="12:00" />
+            <input type="time" id="heure-input" value="${escapeHtml(modalHeure) || '12:00'}" />
           </div>
         </div>
         <div class="field">
@@ -1630,6 +1630,13 @@ function renderAddModal(){
 
 let editingMealId = null;
 let modalAliments = [];
+// Suivis en memoire (comme modalAliments) plutot que lus uniquement dans le
+// DOM au moment d'enregistrer : une mise a jour recue en temps reel pendant
+// que la modale est ouverte declenche un re-rendu complet, qui sinon
+// effacerait silencieusement la date/heure/moment deja saisis.
+let modalMoment = 'Petit-déjeuner';
+let modalDate = '';
+let modalHeure = '';
 let editGenderTemp = null;
 
 function attachWelcomeEvents(){
@@ -1843,12 +1850,11 @@ function attachMainEvents(){
   if(fab) fab.onclick = () => {
     editingMealId = null;
     modalAliments = [];
+    const now = new Date();
+    modalMoment = 'Petit-déjeuner';
+    modalDate = localDateStr(now);
+    modalHeure = now.toTimeString().slice(0,5);
     state.showModal = true; render();
-    setTimeout(()=>{
-      const now = new Date();
-      document.getElementById('date-input').value = localDateStr(now);
-      document.getElementById('heure-input').value = now.toTimeString().slice(0,5);
-    }, 0);
   };
 
   const editPseudoBtn = document.getElementById('edit-pseudo-btn');
@@ -1927,13 +1933,11 @@ function attachMainEvents(){
       modalAliments = meal.alimentsList && meal.alimentsList.length
         ? meal.alimentsList.slice()
         : (meal.aliments || '').split(',').map(s => s.trim()).filter(Boolean);
+      modalMoment = meal.moment;
+      modalDate = meal.date;
+      modalHeure = meal.heure;
       state.showModal = true;
       render();
-      setTimeout(() => {
-        document.getElementById('moment-input').value = meal.moment;
-        document.getElementById('date-input').value = meal.date;
-        document.getElementById('heure-input').value = meal.heure;
-      }, 0);
     };
   });
 
@@ -1945,9 +1949,17 @@ function attachMainEvents(){
     const HEURE_PAR_MOMENT = { 'Petit-déjeuner': '08:00', 'Déjeuner': '12:00', 'Goûter': '16:30', 'Dîner': '19:00' };
     const momentInput = document.getElementById('moment-input');
     if(momentInput) momentInput.onchange = () => {
+      modalMoment = momentInput.value;
       const heure = HEURE_PAR_MOMENT[momentInput.value];
-      if(heure) document.getElementById('heure-input').value = heure;
+      if(heure){
+        modalHeure = heure;
+        document.getElementById('heure-input').value = heure;
+      }
     };
+    const dateInput = document.getElementById('date-input');
+    if(dateInput) dateInput.oninput = () => { modalDate = dateInput.value; };
+    const heureInput = document.getElementById('heure-input');
+    if(heureInput) heureInput.oninput = () => { modalHeure = heureInput.value; };
 
     function refreshAlimentChips(){
       const container = document.getElementById('aliment-chips');
