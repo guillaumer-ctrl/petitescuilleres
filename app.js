@@ -1579,14 +1579,14 @@ function renderAddModal(){
           </select>
         </div>
         <div style="display:flex;gap:10px;">
-          <div class="field" style="flex:1;">
+          <div class="field" style="flex:1;min-width:0;">
             <label>Date</label>
-            <input type="date" id="date-input" value="${escapeHtml(modalDate)}" />
+            <input type="date" id="date-input" value="${escapeHtml(modalDate)}" style="width:100%;" />
             <p class="error-text" id="date-error" style="display:none;">Indique une date</p>
           </div>
-          <div class="field" style="flex:1;">
+          <div class="field" style="flex:1;min-width:0;">
             <label>Heure</label>
-            <input type="time" id="heure-input" value="${escapeHtml(modalHeure) || '12:00'}" />
+            <input type="time" id="heure-input" value="${escapeHtml(modalHeure) || '12:00'}" style="width:100%;" />
           </div>
         </div>
         <div class="field">
