@@ -228,13 +228,23 @@ async function loadLocal(){
     }
   }catch(e){}
   await refreshKnownPlanningsFromMemberships();
-  // Le planning "actif" est mémorisé sur l'appareil, pas par compte : si ce
-  // compte n'a en réalité aucun accès dessus (ex: nouveau compte sur un
-  // appareil qui a servi à un autre compte avant), on l'ignore.
-  if(state.planningId && !state.knownPlannings.some(p => p.planningId === state.planningId)){
-    state.planningId = null;
-    state.role = null;
-    try{ await storageAPI.delete('my-planning', false); }catch(e){}
+  // Le planning "actif" (et son rôle) est mémorisé sur l'appareil, pas par
+  // compte : si un administrateur puis un lecteur seul se connectent l'un
+  // après l'autre sur le même appareil pour le même bébé, il ne faut jamais
+  // faire confiance au rôle mis en cache localement (il peut appartenir au
+  // compte précédent) — on le remplace toujours par le vrai rôle de CE
+  // compte, tel que Firestore le rapporte. Si ce compte n'a en réalité aucun
+  // accès à ce planning (ex: nouveau compte sur un appareil qui a servi à un
+  // autre compte avant), on l'ignore complètement.
+  if(state.planningId){
+    const known = state.knownPlannings.find(p => p.planningId === state.planningId);
+    if(known){
+      state.role = known.role;
+    } else {
+      state.planningId = null;
+      state.role = null;
+      try{ await storageAPI.delete('my-planning', false); }catch(e){}
+    }
   }
   state.loading = false;
   await subscribeToPlanning(state.planningId);
@@ -727,6 +737,15 @@ async function sendPasswordReset(email){
 async function logOut(){
   unsubscribePlanning();
   await auth.signOut();
+  // Efface tout l'etat local lie a "quel planning, avec quel role" : il est
+  // memorise par appareil, pas par compte, donc s'il restait en place, le
+  // prochain compte connecte sur cet appareil (ex: un lecteur seul apres un
+  // administrateur, pour le meme bebe) pourrait temporairement voir des
+  // options reservees a l'autre role avant tout re-chargement.
+  state.planningId = null;
+  state.role = null;
+  state.knownPlannings = [];
+  try{ await storageAPI.delete('my-planning', false); }catch(e){}
   state.tab = 'planning';
   state.showCreate = false;
   state.needsPseudo = false;
