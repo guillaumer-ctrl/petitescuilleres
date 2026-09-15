@@ -96,16 +96,21 @@ function normalizeAlimentName(text){
 
 function applyReactionToMatchingMeals(sourceFood, reaction){
   const source = normalizeAlimentName(sourceFood);
-  if(!source) return;
+  if(!source) return [];
+  const touchedIds = [];
   planningData.meals.forEach(m => {
     if(m.statut !== 'passe') return;
     if(!m.reactions) m.reactions = getMealReactions(m);
+    let touched = false;
     getMealFoods(m).forEach(food => {
       if(normalizeAlimentName(food) === source){
         m.reactions[food] = reaction;
+        touched = true;
       }
     });
+    if(touched) touchedIds.push(m.id);
   });
+  return touchedIds;
 }
 
 const FOOD_LIST = {
@@ -232,7 +237,7 @@ async function loadLocal(){
     try{ await storageAPI.delete('my-planning', false); }catch(e){}
   }
   state.loading = false;
-  await refreshPlanning();
+  await subscribeToPlanning(state.planningId);
   render();
 }
 
@@ -251,7 +256,7 @@ async function switchPlanning(planningId, role){
   state.planningId = planningId;
   state.role = role;
   state.tab = 'planning';
-  await refreshPlanning();
+  await subscribeToPlanning(planningId);
   await saveLocal();
   render();
 }
@@ -278,6 +283,7 @@ async function forgetPlanning(planningId){
   state.knownPlannings = state.knownPlannings.filter(p => p.planningId !== planningId);
   await storageAPI.set('my-plannings', JSON.stringify(state.knownPlannings), false);
   if(state.planningId === planningId){
+    unsubscribePlanning();
     state.planningId = null;
     state.role = null;
     try{ await storageAPI.delete('my-planning', false); }catch(e){}
@@ -287,24 +293,149 @@ async function forgetPlanning(planningId){
 
 let planningData = { babyName: '', meals: [] };
 
-async function refreshPlanning(){
-  if(!state.planningId) return;
-  try{
-    const r = await storageAPI.get('data:' + state.planningId, true);
-    if(r && r.value) planningData = JSON.parse(r.value);
-  }catch(e){}
+// ============================================================
+// SYNCHRONISATION TEMPS REEL D'UN PLANNING
+// Un planning est reparti sur deux emplacements Firestore : le document
+// "profil" (prenom, date de naissance, sexe, photo) et une sous-collection
+// "meals" (un document par repas). Les deux sont ecoutes en temps reel via
+// onSnapshot : quand un autre membre de la famille modifie quelque chose,
+// tout le monde le voit apparaitre sans avoir a recharger l'app. Ecrire un
+// champ ou un repas a la fois (plutot qu'un gros document unique reecrit en
+// entier a chaque fois, comme avant) evite aussi qu'une modification d'une
+// personne efface silencieusement celle d'une autre faite au meme moment.
+//
+// Les plannings crees avant ce changement stockaient encore tous leurs repas
+// dans un tableau "meals" a l'interieur du document profil : au premier
+// chargement par un administrateur, ce tableau est copie dans la
+// sous-collection "meals" puis supprime du document profil (une seule
+// operation atomique, donc jamais d'etat intermediaire incoherent). Un
+// lecteur seul qui ouvrirait un planning pas encore migre n'a pas les droits
+// d'ecriture necessaires : il continue simplement a lire l'ancien tableau en
+// attendant qu'un administrateur ouvre l'app.
+let unsubscribeProfile = null;
+let unsubscribeMeals = null;
+let profileSnapshotData = null;
+let mealsSnapshotDocs = null;
+const migratedPlanningIds = new Set();
+
+function unsubscribePlanning(){
+  if(unsubscribeProfile){ unsubscribeProfile(); unsubscribeProfile = null; }
+  if(unsubscribeMeals){ unsubscribeMeals(); unsubscribeMeals = null; }
+  profileSnapshotData = null;
+  mealsSnapshotDocs = null;
 }
 
-async function savePlanning(){
+async function migrateLegacyMealsIfNeeded(planningId, legacyMeals){
+  if(migratedPlanningIds.has(planningId)) return;
+  migratedPlanningIds.add(planningId);
   try{
-    await storageAPI.set('data:' + state.planningId, JSON.stringify(planningData), true);
+    const batch = db.batch();
+    const mealsRef = db.collection('plannings').doc(planningId).collection('meals');
+    legacyMeals.forEach(m => {
+      const { id, ...fields } = m;
+      batch.set(mealsRef.doc(id || randomCode(8)), fields);
+    });
+    batch.update(db.collection(COLLECTION).doc('data:' + planningId), {
+      meals: firebase.firestore.FieldValue.delete()
+    });
+    await batch.commit();
+  }catch(e){
+    console.error('Erreur migration des repas', e);
+    migratedPlanningIds.delete(planningId); // on retentera au prochain chargement
+  }
+}
+
+function applyPlanningSnapshots(){
+  if(!profileSnapshotData) return;
+  const legacyMeals = profileSnapshotData.meals;
+  // Tant que la sous-collection est vide (pas encore lue, ou planning pas
+  // encore migre), on affiche l'ancien tableau s'il en existe un, plutot que
+  // de montrer un planning vide le temps que la migration se termine.
+  const meals = (mealsSnapshotDocs && mealsSnapshotDocs.length > 0)
+    ? mealsSnapshotDocs.map(d => ({ id: d.id, ...d.data() }))
+    : (legacyMeals && legacyMeals.length ? legacyMeals : []);
+  planningData = { ...profileSnapshotData, meals };
+  if(legacyMeals && legacyMeals.length && mealsSnapshotDocs && mealsSnapshotDocs.length === 0 && state.role === 'edit'){
+    migrateLegacyMealsIfNeeded(state.planningId, legacyMeals);
+  }
+}
+
+function subscribeToPlanning(planningId){
+  unsubscribePlanning();
+  if(!planningId) return Promise.resolve();
+  return new Promise(resolve => {
+    let profileReady = false, mealsReady = false, resolved = false;
+    const maybeResolve = () => {
+      if(resolved || !profileReady || !mealsReady) return;
+      resolved = true;
+      resolve();
+    };
+    unsubscribeProfile = db.collection(COLLECTION).doc('data:' + planningId).onSnapshot(doc => {
+      profileSnapshotData = doc.exists ? doc.data() : { babyName: '' };
+      profileReady = true;
+      applyPlanningSnapshots();
+      maybeResolve();
+      if(resolved) render();
+    }, e => { console.error('Erreur synchro planning', e); profileReady = true; maybeResolve(); });
+    unsubscribeMeals = db.collection('plannings').doc(planningId).collection('meals').onSnapshot(snap => {
+      mealsSnapshotDocs = snap.docs;
+      mealsReady = true;
+      applyPlanningSnapshots();
+      maybeResolve();
+      if(resolved) render();
+    }, e => { console.error('Erreur synchro repas', e); mealsReady = true; maybeResolve(); });
+  });
+}
+
+async function savePlanningProfile(fields){
+  try{
+    await db.collection(COLLECTION).doc('data:' + state.planningId).set(fields, { merge: true });
     await saveLocal();
     return true;
   }catch(e){
-    console.error('Erreur sauvegarde planning', e);
-    await refreshPlanning();
-    render();
-    await showAlert("Cette modification n'a pas pu être enregistrée (droits insuffisants ou connexion coupée). Ce que tu voyais à l'écran a été annulé.");
+    console.error('Erreur sauvegarde profil', e);
+    await showAlert("Cette modification n'a pas pu être enregistrée (droits insuffisants ou connexion coupée).");
+    return false;
+  }
+}
+
+async function saveMeal(meal){
+  try{
+    const { id, ...fields } = meal;
+    await db.collection('plannings').doc(state.planningId).collection('meals').doc(id).set(fields);
+    return true;
+  }catch(e){
+    console.error('Erreur sauvegarde repas', e);
+    await showAlert("Ce repas n'a pas pu être enregistré (droits insuffisants ou connexion coupée).");
+    return false;
+  }
+}
+
+async function deleteMeal(mealId){
+  try{
+    await db.collection('plannings').doc(state.planningId).collection('meals').doc(mealId).delete();
+    return true;
+  }catch(e){
+    console.error('Erreur suppression repas', e);
+    await showAlert("Ce repas n'a pas pu être supprimé (droits insuffisants ou connexion coupée).");
+    return false;
+  }
+}
+
+async function saveMealsReactions(mealIds){
+  if(!mealIds.length) return true;
+  try{
+    const batch = db.batch();
+    const mealsRef = db.collection('plannings').doc(state.planningId).collection('meals');
+    mealIds.forEach(id => {
+      const meal = planningData.meals.find(m => m.id === id);
+      if(meal) batch.update(mealsRef.doc(id), { reactions: meal.reactions || {} });
+    });
+    await batch.commit();
+    return true;
+  }catch(e){
+    console.error('Erreur sauvegarde réaction', e);
+    await showAlert("Cette réaction n'a pas pu être enregistrée (droits insuffisants ou connexion coupée).");
     return false;
   }
 }
@@ -575,6 +706,7 @@ async function sendPasswordReset(email){
 }
 
 async function logOut(){
+  unsubscribePlanning();
   await auth.signOut();
   state.tab = 'planning';
   state.showCreate = false;
@@ -592,13 +724,14 @@ async function logOut(){
 
 async function createPlanning(babyName, birthdate, gender, photo){
   const planningId = randomCode(10);
-  planningData = { babyName, birthdate: birthdate || null, gender: gender || null, photo: photo || null, meals: [] };
+  const profileFields = { babyName, birthdate: birthdate || null, gender: gender || null, photo: photo || null };
   try{
     const myIdentifier = state.userProfile && (state.userProfile.phone || state.userProfile.email);
     await ensureMembership(planningId, 'edit', myIdentifier);
-    await storageAPI.set('data:' + planningId, JSON.stringify(planningData), true);
+    await db.collection(COLLECTION).doc('data:' + planningId).set(profileFields);
     state.planningId = planningId;
     state.role = 'edit';
+    await subscribeToPlanning(planningId);
     await saveLocal();
     createPhoto = null;
     createGender = null;
@@ -957,17 +1090,25 @@ function renderCreateForm(){
 
 function autoMigratePastMeals(){
   const now = new Date();
-  let changed = false;
+  const toUpdate = [];
   planningData.meals.forEach(m => {
     if(m.statut === 'futur' && m.date){
       const mealDateTime = new Date(m.date + 'T' + (m.heure || '23:59'));
       if(mealDateTime.getTime() < now.getTime()){
         m.statut = 'passe';
-        changed = true;
+        toUpdate.push(m.id);
       }
     }
   });
-  if(changed) savePlanning();
+  // Un lecteur seul n'a pas le droit d'ecrire "statut" (seul "reactions"
+  // lui est autorise) : le changement reste local a son affichage, un
+  // administrateur le persistera a sa prochaine ouverture de l'app.
+  if(toUpdate.length && state.role === 'edit'){
+    const batch = db.batch();
+    const mealsRef = db.collection('plannings').doc(state.planningId).collection('meals');
+    toUpdate.forEach(id => batch.update(mealsRef.doc(id), { statut: 'passe' }));
+    batch.commit().catch(e => console.error('Erreur mise à jour automatique des statuts', e));
+  }
 }
 
 const ICON_CALENDAR = `<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M7 2a1 1 0 0 1 1 1v1h8V3a1 1 0 1 1 2 0v1h1a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h1V3a1 1 0 0 1 1-1zM4 10v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9H4zm3 2h3v3H7v-3zm5 0h3v3h-3v-3z"/></svg>`;
@@ -1540,6 +1681,7 @@ function attachMainEvents(){
 
     const addBabyBtn = document.getElementById('add-baby-btn');
     if(addBabyBtn) addBabyBtn.onclick = () => {
+      unsubscribePlanning();
       state.planningId = null;
       state.role = null;
       state.showBabySwitcher = false;
@@ -1556,7 +1698,7 @@ function attachMainEvents(){
       if(!file) return;
       try{
         planningData.photo = await resizeImageFile(file, 500, 0.8);
-        await savePlanning();
+        await savePlanningProfile({ photo: planningData.photo });
         render();
       }catch(e){
         console.error('Erreur traitement photo', e);
@@ -1591,20 +1733,24 @@ function attachMainEvents(){
     if(saveProfileField){
       saveProfileField.onclick = async () => {
         const field = state.editingField;
+        let fields = null;
         if(field === 'name'){
           const val = document.getElementById('edit-name-input').value.trim();
           if(!val){ document.getElementById('edit-name-error').style.display = 'block'; return; }
           planningData.babyName = val;
+          fields = { babyName: val };
         } else if(field === 'birthdate'){
           const val = document.getElementById('edit-birthdate-input').value;
           if(!val){ document.getElementById('edit-birthdate-error').style.display = 'block'; return; }
           const ageYears = (Date.now() - new Date(val).getTime()) / (1000 * 60 * 60 * 24 * 365.25);
           if(ageYears < 0 || ageYears > 100){ document.getElementById('edit-birthdate-error').style.display = 'block'; return; }
           planningData.birthdate = val;
+          fields = { birthdate: val };
         } else if(field === 'gender'){
           planningData.gender = editGenderTemp;
+          fields = { gender: editGenderTemp };
         }
-        await savePlanning();
+        if(fields) await savePlanningProfile(fields);
         state.editingField = null;
         render();
       };
@@ -1700,8 +1846,8 @@ function attachMainEvents(){
     btn.onclick = async () => {
       const meal = planningData.meals.find(m => m.id === btn.dataset.id);
       if(meal){
-        applyReactionToMatchingMeals(btn.dataset.food, btn.dataset.react);
-        await savePlanning();
+        const touchedIds = applyReactionToMatchingMeals(btn.dataset.food, btn.dataset.react);
+        await saveMealsReactions(touchedIds);
         render();
       }
     };
@@ -1764,8 +1910,9 @@ function attachMainEvents(){
     if(deleteBtn){
       deleteBtn.onclick = async () => {
         if(!(await showConfirm('Supprimer ce repas ?'))) return;
-        planningData.meals = planningData.meals.filter(m => m.id !== editingMealId);
-        await savePlanning();
+        const mealId = editingMealId;
+        planningData.meals = planningData.meals.filter(m => m.id !== mealId);
+        await deleteMeal(mealId);
         state.showModal = false;
         editingMealId = null;
         render();
@@ -1851,13 +1998,15 @@ function attachMainEvents(){
         categories: categories,
         categorie: categories[0]
       };
+      let meal;
       if(editingMealId){
-        const meal = planningData.meals.find(m => m.id === editingMealId);
+        meal = planningData.meals.find(m => m.id === editingMealId);
         if(meal) Object.assign(meal, fields);
       } else {
-        planningData.meals.push(Object.assign({ id: randomCode(8), reactions: {} }, fields));
+        meal = Object.assign({ id: randomCode(8), reactions: {} }, fields);
+        planningData.meals.push(meal);
       }
-      await savePlanning();
+      await saveMeal(meal);
       state.showModal = false;
       state.tab = statutAuto === 'passe' ? 'historique' : 'planning';
       editingMealId = null;
