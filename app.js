@@ -1193,7 +1193,7 @@ function renderMain(){
 function renderBabySwitcherModal(){
   const rows = state.knownPlannings.map(p => {
     const isCurrent = p.planningId === state.planningId;
-    const avatarStyle = p.photo ? `background-image:url('${p.photo}');background-size:cover;background-position:center;` : 'background:var(--accent-light);';
+    const avatarStyle = p.photo ? `background-image:url('${escapeHtml(p.photo)}');background-size:cover;background-position:center;` : 'background:var(--accent-light);';
     return `
     <div class="card" style="display:flex;align-items:center;justify-content:space-between;">
       <div style="display:flex;align-items:center;gap:12px;min-width:0;">
@@ -1253,8 +1253,8 @@ function renderHistoriqueTab(){
     <div class="card">
       <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:2px;">
         <div>
-          <div style="font-size:16px;font-style:italic;color:var(--text-secondary);">${fmtDate(m.date)}, ${m.heure}</div>
-          <div style="font-weight:600;font-size:16px;margin-top:4px;">${m.moment}</div>
+          <div style="font-size:16px;font-style:italic;color:var(--text-secondary);">${fmtDate(m.date)}, ${escapeHtml(m.heure)}</div>
+          <div style="font-weight:600;font-size:16px;margin-top:4px;">${escapeHtml(m.moment)}</div>
         </div>
         ${state.role === 'edit' ? `<button class="edit-meal-btn" data-editid="${m.id}" style="background:none;border:none;font-size:16px;color:var(--text-secondary);text-decoration:underline;white-space:nowrap;padding:0;display:flex;align-items:center;">Modifier</button>` : ''}
       </div>
@@ -1982,7 +1982,7 @@ function attachMainEvents(){
       searchInput.onblur = () => setTimeout(() => { suggBox.style.display = 'none'; }, 150);
 
       const categoryPicker = document.getElementById('category-picker');
-      document.getElementById('category-picker-confirm').onclick = () => {
+      document.getElementById('category-picker-confirm').onclick = async () => {
         const food = categoryPicker.dataset.pendingFood;
         const category = document.getElementById('category-picker-select').value;
         if(!food) return;
@@ -1993,6 +1993,7 @@ function attachMainEvents(){
         categoryPicker.dataset.pendingFood = '';
         refreshAlimentChips();
         searchInput.focus();
+        await savePlanningProfile({ customCategories: planningData.customCategories });
       };
     }
 
