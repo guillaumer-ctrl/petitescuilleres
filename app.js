@@ -315,6 +315,7 @@ let planningData = { babyName: '', meals: [] };
 let unsubscribeProfile = null;
 let unsubscribeMeals = null;
 let profileSnapshotData = null;
+let profileIsLegacyFormat = false;
 let mealsSnapshotDocs = null;
 const migratedPlanningIds = new Set();
 
@@ -322,25 +323,43 @@ function unsubscribePlanning(){
   if(unsubscribeProfile){ unsubscribeProfile(); unsubscribeProfile = null; }
   if(unsubscribeMeals){ unsubscribeMeals(); unsubscribeMeals = null; }
   profileSnapshotData = null;
+  profileIsLegacyFormat = false;
   mealsSnapshotDocs = null;
 }
 
-async function migrateLegacyMealsIfNeeded(planningId, legacyMeals){
+// Avant ce changement, un planning etait stocke via un systeme de stockage
+// generique qui enveloppait toutes les donnees dans un seul champ texte
+// (document Firestore { value: "...JSON..." }). Cette fonction sait lire
+// aussi bien cet ancien format que le nouveau (champs directement au niveau
+// du document), pour ne jamais perdre l'acces aux plannings crees avant.
+function parseProfileDoc(doc){
+  if(!doc.exists) return { data: { babyName: '' }, isLegacy: false };
+  const raw = doc.data();
+  if(typeof raw.value === 'string'){
+    try{ return { data: JSON.parse(raw.value), isLegacy: true }; }
+    catch(e){ console.error('Erreur lecture ancien format de planning', e); return { data: { babyName: '' }, isLegacy: false }; }
+  }
+  return { data: raw, isLegacy: false };
+}
+
+async function migrateLegacyMealsIfNeeded(planningId, legacyData){
   if(migratedPlanningIds.has(planningId)) return;
   migratedPlanningIds.add(planningId);
   try{
+    const { meals, ...profileFields } = legacyData;
     const batch = db.batch();
     const mealsRef = db.collection('plannings').doc(planningId).collection('meals');
-    legacyMeals.forEach(m => {
+    (meals || []).forEach(m => {
       const { id, ...fields } = m;
       batch.set(mealsRef.doc(id || randomCode(8)), fields);
     });
-    batch.update(db.collection(COLLECTION).doc('data:' + planningId), {
-      meals: firebase.firestore.FieldValue.delete()
-    });
+    // Remplace entierement l'ancien document (qui contenait { value: "..." })
+    // par des champs directement lisibles, sans le tableau meals desormais
+    // dans sa propre sous-collection.
+    batch.set(db.collection(COLLECTION).doc('data:' + planningId), profileFields);
     await batch.commit();
   }catch(e){
-    console.error('Erreur migration des repas', e);
+    console.error('Erreur migration du planning', e);
     migratedPlanningIds.delete(planningId); // on retentera au prochain chargement
   }
 }
@@ -355,8 +374,8 @@ function applyPlanningSnapshots(){
     ? mealsSnapshotDocs.map(d => ({ id: d.id, ...d.data() }))
     : (legacyMeals && legacyMeals.length ? legacyMeals : []);
   planningData = { ...profileSnapshotData, meals };
-  if(legacyMeals && legacyMeals.length && mealsSnapshotDocs && mealsSnapshotDocs.length === 0 && state.role === 'edit'){
-    migrateLegacyMealsIfNeeded(state.planningId, legacyMeals);
+  if(profileIsLegacyFormat && mealsSnapshotDocs && mealsSnapshotDocs.length === 0 && state.role === 'edit'){
+    migrateLegacyMealsIfNeeded(state.planningId, profileSnapshotData);
   }
 }
 
@@ -371,7 +390,9 @@ function subscribeToPlanning(planningId){
       resolve();
     };
     unsubscribeProfile = db.collection(COLLECTION).doc('data:' + planningId).onSnapshot(doc => {
-      profileSnapshotData = doc.exists ? doc.data() : { babyName: '' };
+      const parsed = parseProfileDoc(doc);
+      profileSnapshotData = parsed.data;
+      profileIsLegacyFormat = parsed.isLegacy;
       profileReady = true;
       applyPlanningSnapshots();
       maybeResolve();
@@ -615,12 +636,10 @@ async function refreshKnownPlanningsFromMemberships(){
       const role = doc.data().role;
       let babyName = '', photo = '';
       try{
-        const dataDoc = await storageAPI.get('data:' + planningId, true);
-        if(dataDoc && dataDoc.value){
-          const parsed = JSON.parse(dataDoc.value);
-          babyName = parsed.babyName || '';
-          photo = parsed.photo || '';
-        }
+        const dataDoc = await db.collection(COLLECTION).doc('data:' + planningId).get();
+        const parsed = parseProfileDoc(dataDoc).data;
+        babyName = parsed.babyName || '';
+        photo = parsed.photo || '';
       }catch(e){}
       list.push({ planningId, role, babyName, photo });
     }
