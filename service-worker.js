@@ -1,9 +1,10 @@
-const CACHE_NAME = "petites-cuilleres-v14";
+const CACHE_NAME = "petites-cuilleres-v15";
 const FILES_TO_CACHE = [
   "./",
   "./index.html",
   "./styles.css",
   "./app.js",
+  "./native-admob.js",
   "./fonts/AveriaLibre-Regular.ttf",
   "./fonts/AveriaLibre-Bold.ttf",
   "./manifest.json",
