@@ -87,6 +87,13 @@ function showFeedbackModal(message, { confirmLabel = 'OK', cancelLabel = null } 
 function showAlert(message){ return showFeedbackModal(message); }
 function showConfirm(message){ return showFeedbackModal(message, { confirmLabel: 'Confirmer', cancelLabel: 'Annuler' }); }
 
+// La connexion Google par popup ne fonctionne pas dans la WebView native
+// (app Android/Capacitor) : le bouton est masque dans ce contexte. Email/mot
+// de passe reste disponible partout.
+function isNativeApp(){
+  return typeof Capacitor !== 'undefined' && !!(Capacitor.isNativePlatform && Capacitor.isNativePlatform());
+}
+
 function normalizeAlimentName(text){
   return (text || '')
     .toLowerCase()
@@ -989,6 +996,7 @@ function renderAuthForm(isSignup){
       </button>
       ${(!isSignup && !isPhone) ? `<button class="btn btn-ghost" id="forgot-password-btn" style="margin:4px auto 0;">Mot de passe oublié ?</button>` : ''}
 
+      ${isNativeApp() ? '' : `
       <div style="display:flex;align-items:center;gap:10px;margin:1.25rem 0;">
         <div style="flex:1;height:1px;background:var(--border);"></div>
         <span style="color:var(--text-muted);font-size:14px;">ou</span>
@@ -998,6 +1006,7 @@ function renderAuthForm(isSignup){
       <button class="btn btn-outline" id="google-signin-btn" ${state.authBusy ? 'disabled' : ''}>
         ${ICON_GOOGLE} Continuer avec Google
       </button>
+      `}
 
       <button class="btn btn-ghost" id="toggle-auth-mode-btn" style="margin-top:1.5rem;">
         ${isSignup ? 'Déjà un compte ? Se connecter' : "Pas de compte ? En créer un"}
@@ -2079,6 +2088,7 @@ function attachMainEvents(){
         categorie: categories[0]
       };
       let meal;
+      const isNewMeal = !editingMealId;
       if(editingMealId){
         meal = planningData.meals.find(m => m.id === editingMealId);
         if(meal) Object.assign(meal, fields);
@@ -2087,6 +2097,12 @@ function attachMainEvents(){
         planningData.meals.push(meal);
       }
       await saveMeal(meal);
+      // Moment neutre pour une eventuelle interstitielle (app native
+      // uniquement, cf. native-admob.js) : uniquement a l'ajout d'un
+      // nouveau repas, jamais lors d'une simple modification ni juste
+      // apres l'enregistrement d'une reaction (potentiellement une
+      // allergie, un moment qu'on ne veut pas interrompre par une pub).
+      if(isNewMeal && window.__showInterstitialAd) window.__showInterstitialAd();
       state.showModal = false;
       state.tab = statutAuto === 'passe' ? 'historique' : 'planning';
       editingMealId = null;
