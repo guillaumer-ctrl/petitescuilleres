@@ -69,7 +69,7 @@ h1,h2,h3,.title-font{ font-family:'Averia Libre',sans-serif; font-weight:700; ma
   justify-content:center;
   gap:8px;
 }
-.btn-primary{ background:var(--accent); color:#FFFFFF; }
+.btn-primary{ background:var(--accent); color:var(--primary); }
 .btn-secondary{ background:var(--card); color:var(--text); border:1.5px solid var(--border); }
 .btn-outline{ background:transparent; color:var(--primary); border:1.5px solid var(--primary); }
 .btn-ghost{ background:transparent; color:var(--text-secondary); border:none; text-decoration:underline; height:auto; padding:8px; }
@@ -126,7 +126,7 @@ label{ color:var(--text-secondary); display:block; margin-bottom:6px; }
 .tab-spacer{ width:16px; flex-shrink:0; }
 .tab-add-btn{
   width:58px; height:58px; border-radius:50%;
-  background:var(--accent); color:#FFFFFF;
+  background:var(--accent); color:var(--primary);
   border:4px solid var(--bg);
   display:flex; align-items:center; justify-content:center;
   cursor:pointer; flex-shrink:0; margin:0 4px;

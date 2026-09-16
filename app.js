@@ -65,7 +65,7 @@ function showFeedbackModal(message, { confirmLabel = 'OK', cancelLabel = null } 
           <p id="feedback-message" style="font-size:16px;color:var(--text);margin:0 0 1.25rem;">${escapeHtml(message)}</p>
           <div style="display:flex;gap:10px;">
             ${cancelLabel ? `<button class="btn btn-secondary" id="feedback-cancel-btn" style="margin:0;">${escapeHtml(cancelLabel)}</button>` : ''}
-            <button class="btn btn-primary" id="feedback-confirm-btn" style="margin:0;color:#FFFFFF;">${escapeHtml(confirmLabel)}</button>
+            <button class="btn btn-primary" id="feedback-confirm-btn" style="margin:0;">${escapeHtml(confirmLabel)}</button>
           </div>
         </div>
       </div>
@@ -827,7 +827,7 @@ function renderPseudoStep(){
         <label>Prénom ou pseudo</label>
         <input type="text" id="pseudo-input" placeholder="Ex : Maman, Léo, Mamie..." autocomplete="nickname" />
       </div>
-      <button class="btn btn-primary" id="submit-pseudo-btn" style="color:#FFFFFF;margin-top:0.5rem;">Continuer</button>
+      <button class="btn btn-primary" id="submit-pseudo-btn" style="margin-top:0.5rem;">Continuer</button>
     </div>
   `;
 }
@@ -948,7 +948,7 @@ function renderAuthLanding(){
       </div>
       ${state.authError ? `<p class="error-text" style="text-align:center;margin-bottom:14px;">${state.authError}</p>` : ''}
       <div style="width:100%;">
-        <button class="btn btn-primary" id="goto-signup-btn" style="margin-bottom:10px;color:#FFFFFF;">Créer un compte</button>
+        <button class="btn btn-primary" id="goto-signup-btn" style="margin-bottom:10px;">Créer un compte</button>
         <button class="btn btn-outline" id="goto-login-btn">Me connecter</button>
         <p style="font-size:13px;color:var(--text-muted);text-align:center;margin:14px 0 0;">En continuant, tu acceptes les <a href="./cgu.html" style="color:var(--text-muted);">CGU</a> et la <a href="./confidentialite.html" style="color:var(--text-muted);">politique de confidentialité</a>.</p>
         <p style="font-size:13px;color:var(--text-muted);text-align:center;margin:8px 0 0;"><a href="./blog/index.html" style="color:var(--text-muted);">Nos conseils sur la diversification alimentaire</a></p>
@@ -966,8 +966,8 @@ function renderAuthForm(isSignup){
       <div class="title-font" style="font-size:30px;color:var(--text);margin-bottom:1.25rem;text-align:center;">${isSignup ? 'Créer un compte' : 'Se connecter'}</div>
 
       <div style="display:flex;gap:8px;margin-bottom:1.25rem;">
-        <button class="btn ${!isPhone ? 'btn-primary' : 'btn-secondary'}" id="auth-method-email" style="height:38px;font-size:15px;${!isPhone ? 'color:#FFFFFF;' : ''}">Email</button>
-        <button class="btn ${isPhone ? 'btn-primary' : 'btn-secondary'}" id="auth-method-phone" style="height:38px;font-size:15px;${isPhone ? 'color:#FFFFFF;' : ''}">Téléphone</button>
+        <button class="btn ${!isPhone ? 'btn-primary' : 'btn-secondary'}" id="auth-method-email" style="height:38px;font-size:15px;">Email</button>
+        <button class="btn ${isPhone ? 'btn-primary' : 'btn-secondary'}" id="auth-method-phone" style="height:38px;font-size:15px;">Téléphone</button>
       </div>
 
       ${state.authError ? `<p class="error-text" style="text-align:center;margin-bottom:14px;">${state.authError}</p>` : ''}
@@ -984,7 +984,7 @@ function renderAuthForm(isSignup){
         </div>
       </div>
 
-      <button class="btn btn-primary" id="auth-submit-btn" style="color:#FFFFFF;" ${state.authBusy ? 'disabled' : ''}>
+      <button class="btn btn-primary" id="auth-submit-btn" ${state.authBusy ? 'disabled' : ''}>
         ${state.authBusy ? (isSignup ? 'Création en cours...' : 'Connexion en cours...') : (isSignup ? 'Créer mon compte' : 'Se connecter')}
       </button>
       ${(!isSignup && !isPhone) ? `<button class="btn btn-ghost" id="forgot-password-btn" style="margin:4px auto 0;">Mot de passe oublié ?</button>` : ''}
@@ -1100,7 +1100,7 @@ function renderWelcomeReturning(){
         `;}).join('')}
       </div>
       <div style="margin-top:auto;width:100%;padding-top:1.5rem;">
-        <button class="btn btn-primary" id="btn-create" style="color:#FFFFFF;">
+        <button class="btn btn-primary" id="btn-create">
           Ajouter un autre bébé
         </button>
         <p style="font-size:14px;color:var(--text-muted);text-align:center;margin:10px 0 0;">Pour un autre bébé, demande à un administrateur de te donner accès depuis l'onglet Partage, avec cet email ou ce numéro.</p>
@@ -1273,7 +1273,8 @@ function renderBabySwitcherModal(){
 function renderPlanningTab(){
   const futurs = planningData.meals.filter(m => m.statut === 'futur').sort((a,b)=> (a.date+a.heure).localeCompare(b.date+b.heure));
   if(futurs.length === 0){
-    return `<p style="text-align:center;color:var(--text-muted);font-size:16px;margin-top:2rem;">Aucun repas planifié pour l'instant.</p>`;
+    const hint = state.role === 'edit' ? " Touche le bouton + ci-dessous pour en ajouter un." : '';
+    return `<p style="text-align:center;color:var(--text-muted);font-size:16px;margin-top:2rem;">Aucun repas planifié pour l'instant.${hint}</p>`;
   }
   return futurs.map(m => {
     return `
@@ -1291,7 +1292,7 @@ function renderPlanningTab(){
 function renderHistoriqueTab(){
   const passes = planningData.meals.filter(m => m.statut === 'passe').sort((a,b)=> (b.date+b.heure).localeCompare(a.date+a.heure));
   if(passes.length === 0){
-    return `<p style="text-align:center;color:var(--text-muted);font-size:16px;margin-top:2rem;">Aucun repas enregistré pour l'instant.</p>`;
+    return `<p style="text-align:center;color:var(--text-muted);font-size:16px;margin-top:2rem;">Aucun repas enregistré pour l'instant. Les repas passés apparaîtront ici automatiquement.</p>`;
   }
   return passes.map(m => {
     const foods = getMealFoods(m);
@@ -1525,14 +1526,14 @@ function renderPartageTab(){
       <label style="display:block;margin-bottom:10px;">Donner un accès</label>
 
       <div style="display:flex;gap:8px;margin-bottom:12px;">
-        <button class="btn ${state.inviteRole === 'edit' ? 'btn-primary' : 'btn-secondary'}" data-inviterole="edit" style="height:38px;font-size:15px;${state.inviteRole === 'edit' ? 'color:#FFFFFF;' : ''}">Administrateur</button>
-        <button class="btn ${state.inviteRole === 'view' ? 'btn-primary' : 'btn-secondary'}" data-inviterole="view" style="height:38px;font-size:15px;${state.inviteRole === 'view' ? 'color:#FFFFFF;' : ''}">Lecture seule</button>
+        <button class="btn ${state.inviteRole === 'edit' ? 'btn-primary' : 'btn-secondary'}" data-inviterole="edit" style="height:38px;font-size:15px;">Administrateur</button>
+        <button class="btn ${state.inviteRole === 'view' ? 'btn-primary' : 'btn-secondary'}" data-inviterole="view" style="height:38px;font-size:15px;">Lecture seule</button>
       </div>
 
       <input type="text" id="grant-identifier-input" placeholder="Email ou numéro de téléphone" style="margin-bottom:10px;" autocapitalize="none" />
       ${state.grantError ? `<p class="error-text" style="margin-bottom:10px;">${state.grantError}</p>` : ''}
       ${state.grantSuccessMessage ? `<p style="color:var(--success-text);background:var(--success-bg);border-radius:12px;padding:10px 14px;font-size:15px;margin-bottom:10px;">${state.grantSuccessMessage}</p>` : ''}
-      <button class="btn btn-primary" id="grant-access-btn" style="color:#FFFFFF;" ${state.grantBusy ? 'disabled' : ''}>${state.grantBusy ? 'Envoi en cours...' : "Donner l'accès"}</button>
+      <button class="btn btn-primary" id="grant-access-btn" ${state.grantBusy ? 'disabled' : ''}>${state.grantBusy ? 'Envoi en cours...' : "Donner l'accès"}</button>
     </div>
 
     <label style="display:block;margin:1.5rem 0 10px;">Personnes ayant accès</label>
@@ -1615,7 +1616,7 @@ function renderAddModal(){
               <option value="Épices">Épices</option>
               <option value="Autres" selected>Autres</option>
             </select>
-            <button type="button" id="category-picker-confirm" class="btn btn-primary" style="height:38px;font-size:15px;color:#FFFFFF;">Ajouter cet aliment</button>
+            <button type="button" id="category-picker-confirm" class="btn btn-primary" style="height:38px;font-size:15px;">Ajouter cet aliment</button>
           </div>
           <p class="error-text" id="aliments-error" style="display:none;">Ajoute au moins un aliment</p>
         </div>
