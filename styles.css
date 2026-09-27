@@ -34,6 +34,7 @@
   --radius:999px;
 }
 *{box-sizing:border-box;}
+html, body{ overflow-x:hidden; max-width:100%; }
 body{
   margin:0;
   font-family:'Averia Libre',sans-serif;
@@ -126,9 +127,10 @@ label{ color:var(--text-secondary); display:block; margin-bottom:6px; }
 .tab.active{ color:#fff; }
 
 .subtab-btn{
-  flex-shrink:0; height:36px; padding:0 16px; border-radius:var(--radius);
+  flex:1; min-width:0; height:36px; padding:0 8px; border-radius:var(--radius);
   border:1.5px solid var(--border); background:var(--card); color:var(--text-secondary);
-  font-size:14px; font-weight:600; cursor:pointer; white-space:nowrap;
+  font-size:13px; font-weight:600; cursor:pointer; white-space:nowrap;
+  overflow:hidden; text-overflow:ellipsis;
 }
 .subtab-btn.active{ background:var(--primary); border-color:var(--primary); color:#fff; }
 .subtab-btn.subtab-highlight{ background:var(--accent); border-color:var(--accent); color:var(--primary); }

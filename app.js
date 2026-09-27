@@ -1300,7 +1300,7 @@ const ICON_SPOON = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" 
 const ICON_GOOGLE = `<svg viewBox="0 0 48 48" width="20" height="20"><path fill="#FFC107" d="M43.6 20.5H42V20.4H24v7.2h11.3c-1.6 4.6-6 7.9-11.3 7.9-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3.1l5.1-5.1C33.5 6.1 29 4.4 24 4.4 13.3 4.4 4.6 13.1 4.6 23.8s8.7 19.4 19.4 19.4S43.4 34.5 43.4 23.8c0-1.1-.1-2.3-.3-3.3z"/><path fill="#FF3D00" d="M6.3 14.7l5.9 4.3c1.6-4 5.5-6.8 10-6.8 3.1 0 5.9 1.2 8 3.1l5.1-5.1C33.5 6.1 29 4.4 24 4.4c-7.5 0-14 4.2-17.7 10.3z"/><path fill="#4CAF50" d="M24 43.2c4.9 0 9.4-1.9 12.8-4.9l-5.9-5c-1.9 1.4-4.3 2.2-6.9 2.2-5.3 0-9.7-3.3-11.3-7.9l-5.9 4.6c3.7 6.2 10.2 11 17.2 11z"/><path fill="#1976D2" d="M43.6 20.5H42V20.4H24v7.2h11.3c-.8 2.2-2.2 4.1-4.1 5.4l5.9 5c-.4.4 6.3-4.6 6.3-14.2 0-1.1-.1-2.3-.3-3.3z"/></svg>`;
 
 function renderSubNav(items, activeKey, groupAttr){
-  return `<div style="display:flex;gap:8px;overflow-x:auto;padding:0 1.25rem 14px;">
+  return `<div style="display:flex;gap:6px;padding:0 1.25rem 14px;">
     ${items.map(it => `<button type="button" class="subtab-btn ${it.key === 'ajouter' ? 'subtab-highlight' : ''} ${activeKey === it.key ? 'active' : ''}" data-${groupAttr}="${it.key}">${escapeHtml(it.label)}</button>`).join('')}
   </div>`;
 }
