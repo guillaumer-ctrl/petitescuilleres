@@ -242,7 +242,7 @@ async function loadLocal(){
       if(parsed.tab && legacyRepasSubTabs[parsed.tab]){
         state.tab = 'repas';
         state.repasSubTab = legacyRepasSubTabs[parsed.tab];
-      } else if(['repas', 'sommeil', 'partage', 'profil'].includes(parsed.tab)){
+      } else if(['repas', 'sommeil', 'menu', 'partage', 'profil'].includes(parsed.tab)){
         state.tab = parsed.tab;
       }
     }
@@ -842,6 +842,24 @@ function fmtDate(d){
   return dt.toLocaleDateString('fr-FR', {weekday:'long', day:'numeric', month:'long'});
 }
 
+function formatBabyAge(birthdate){
+  if(!birthdate) return '';
+  const birth = new Date(birthdate + 'T00:00:00');
+  const now = new Date();
+  if(birth.getTime() > now.getTime()) return '';
+  let years = now.getFullYear() - birth.getFullYear();
+  let months = now.getMonth() - birth.getMonth();
+  let days = now.getDate() - birth.getDate();
+  if(days < 0) months--;
+  if(months < 0){ months += 12; years--; }
+  if(years === 0 && months === 0){
+    const totalDays = Math.max(Math.floor((now - birth) / (1000 * 60 * 60 * 24)), 0);
+    return `${totalDays} jour${totalDays > 1 ? 's' : ''}`;
+  }
+  if(years === 0) return `${months} mois`;
+  return `${years} an${years > 1 ? 's' : ''}${months > 0 ? ` ${months} mois` : ''}`;
+}
+
 function reactionConfig(val){
   return {
     aime: { icon: ICON_REACT_AIME, label:'Aimé', bg:'var(--success-bg)', text:'var(--success-text)' },
@@ -1279,8 +1297,9 @@ function renderSommeilContent(){
 function renderMain(){
   autoMigratePastMeals();
   const todayLabel = new Date().toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' });
-  const tabTitles = { repas: 'Repas', sommeil: 'Sommeil', partage: 'Paramètres', profil: 'Profil de bébé' };
+  const tabTitles = { repas: 'Repas', sommeil: 'Sommeil', menu: 'Menu', partage: 'Paramètres', profil: 'Profil de bébé' };
   const headerPhotoStyle = planningData.photo ? `background-image:url('${escapeHtml(planningData.photo)}');background-size:cover;background-position:center;` : '';
+  const ageLabel = formatBabyAge(planningData.birthdate);
 
   const repasSubItems = [
     ...(state.role === 'edit' ? [{ key: 'ajouter', label: 'Ajouter' }] : []),
@@ -1295,15 +1314,16 @@ function renderMain(){
 
   return `
     <div class="top-header">
-      <div style="display:flex;align-items:center;gap:12px;">
-        <button class="avatar" id="avatar-btn" data-tab="profil" aria-label="Voir le profil de bébé" style="border:none;cursor:pointer;padding:0;overflow:hidden;color:var(--accent);${headerPhotoStyle || 'background:var(--accent-light);'}">${planningData.photo ? '' : ICON_BABY_SILHOUETTE}</button>
-        <div>
-          <div style="font-size:12px;color:var(--primary-text);font-weight:500;">${todayLabel}</div>
-          <div style="font-weight:700;font-size:20px;color:var(--text);">${escapeHtml(planningData.babyName)}</div>
+      <div style="display:flex;align-items:center;gap:12px;min-width:0;">
+        <button class="avatar" id="avatar-btn" data-tab="profil" aria-label="Voir le profil de bébé" style="border:none;cursor:pointer;padding:0;overflow:hidden;color:var(--accent);flex-shrink:0;${headerPhotoStyle || 'background:var(--accent-light);'}">${planningData.photo ? '' : ICON_BABY_SILHOUETTE}</button>
+        <div style="min-width:0;">
+          <div style="font-weight:700;font-size:20px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(planningData.babyName)}</div>
+          ${ageLabel ? `<div style="font-size:13px;color:var(--text-secondary);font-weight:500;">${escapeHtml(ageLabel)}</div>` : ''}
         </div>
       </div>
-      <div style="display:flex;gap:8px;">
-        <button class="header-icon-btn ${state.tab==='partage'?'active':''}" data-tab="partage" aria-label="Paramètres">${ICON_SETTINGS}</button>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px;flex-shrink:0;">
+        <div style="font-size:12px;color:var(--primary-text);font-weight:500;white-space:nowrap;">${todayLabel}</div>
+        <button class="header-icon-btn ${state.tab==='menu' || state.tab==='partage' ? 'active' : ''}" data-tab="menu" aria-label="Menu" style="opacity:1;">${ICON_SETTINGS}</button>
       </div>
     </div>
     <div style="padding:0 1.25rem;">
@@ -1314,6 +1334,7 @@ function renderMain(){
     <div class="screen" style="padding-bottom:1rem;padding-top:0.5rem;">
       ${state.tab === 'repas' ? renderRepasContent() : ''}
       ${state.tab === 'sommeil' ? renderSommeilContent() : ''}
+      ${state.tab === 'menu' ? renderMenuTab() : ''}
       ${state.tab === 'partage' ? renderPartageTab() : ''}
       ${state.tab === 'profil' ? renderProfilTab() : ''}
     </div>
@@ -1733,23 +1754,38 @@ async function loadPlanningMembersIfNeeded(){
   render();
 }
 
+function renderMenuTab(){
+  return `
+    <div class="card" id="menu-babies-btn" style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px;cursor:pointer;">
+      <div style="min-width:0;">
+        <div style="font-size:16px;font-weight:600;color:var(--text);">Bébés</div>
+        <div style="font-size:14px;color:var(--text-secondary);">Changer ou ajouter un bébé</div>
+      </div>
+      <span class="header-icon-btn" style="opacity:1;flex-shrink:0;">${ICON_USERS}</span>
+    </div>
+    <div class="card" id="menu-settings-btn" style="display:flex;justify-content:space-between;align-items:center;gap:10px;cursor:pointer;">
+      <div style="min-width:0;">
+        <div style="font-size:16px;font-weight:600;color:var(--text);">Paramètres</div>
+        <div style="font-size:14px;color:var(--text-secondary);">Compte, accès partagés, informations légales</div>
+      </div>
+      <span class="header-icon-btn" style="opacity:1;flex-shrink:0;">${ICON_SETTINGS}</span>
+    </div>
+    ${state.showBabySwitcher ? renderBabySwitcherModal() : ''}
+  `;
+}
+
 function renderPartageTab(){
   const myPseudo = (state.userProfile && state.userProfile.pseudo) || '';
   const myIdentifier = (state.userProfile && (state.userProfile.phone || state.userProfile.email)) || 'Compte connecté';
+  const backLink = `<button type="button" id="back-to-menu-btn" style="display:flex;align-items:center;gap:6px;background:none;border:none;padding:0;margin-bottom:14px;color:var(--text-secondary);font-size:15px;cursor:pointer;">${ICON_BACK} Menu</button>`;
   const pseudoSection = `
+    ${backLink}
     <div class="card" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
       <div style="min-width:0;">
         <div style="font-size:16px;color:var(--text-secondary);margin-bottom:4px;">Ton nom affiché</div>
         <div style="font-size:16px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(myPseudo) || '—'}</div>
       </div>
       <button class="edit-field-btn" id="edit-pseudo-btn" aria-label="Modifier ton nom">${ICON_EDIT}</button>
-    </div>
-    <div class="card" style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px;">
-      <div style="min-width:0;">
-        <div style="font-size:16px;color:var(--text-secondary);margin-bottom:4px;">Bébés</div>
-        <div style="font-size:15px;font-weight:600;color:var(--text);">Changer ou ajouter un bébé</div>
-      </div>
-      <button class="header-icon-btn" id="switch-baby-btn" aria-label="Changer de bébé" style="opacity:1;flex-shrink:0;">${ICON_USERS}</button>
     </div>
     <div class="card" style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:1.5rem;">
       <div style="min-width:0;">
@@ -1759,7 +1795,6 @@ function renderPartageTab(){
       <button class="btn btn-secondary" id="logout-btn" style="width:auto;height:38px;padding:0 14px;font-size:15px;flex-shrink:0;">Déconnexion</button>
     </div>
     ${state.editingPseudo ? renderPseudoEditModal() : ''}
-    ${state.showBabySwitcher ? renderBabySwitcherModal() : ''}
   `;
   const legalLinks = `<p style="text-align:center;font-size:13px;color:var(--text-muted);margin-top:2rem;"><a href="./cgu.html" style="color:var(--text-muted);">CGU</a> · <a href="./confidentialite.html" style="color:var(--text-muted);">Confidentialité</a></p>`;
 
@@ -2004,8 +2039,14 @@ function attachMainEvents(){
   });
 
 
-  const switchBabyBtn = document.getElementById('switch-baby-btn');
-  if(switchBabyBtn) switchBabyBtn.onclick = () => { state.showBabySwitcher = true; render(); };
+  const menuBabiesBtn = document.getElementById('menu-babies-btn');
+  if(menuBabiesBtn) menuBabiesBtn.onclick = () => { state.showBabySwitcher = true; render(); };
+
+  const menuSettingsBtn = document.getElementById('menu-settings-btn');
+  if(menuSettingsBtn) menuSettingsBtn.onclick = () => { state.tab = 'partage'; saveLocal(); render(); };
+
+  const backToMenuBtn = document.getElementById('back-to-menu-btn');
+  if(backToMenuBtn) backToMenuBtn.onclick = () => { state.tab = 'menu'; saveLocal(); render(); };
 
   const logoutBtn = document.getElementById('logout-btn');
   if(logoutBtn) logoutBtn.onclick = () => logOut();
