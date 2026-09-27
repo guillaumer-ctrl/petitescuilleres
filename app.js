@@ -1260,7 +1260,6 @@ function renderMain(){
       </div>
       <div style="display:flex;gap:8px;">
         <button class="header-icon-btn ${state.tab==='stats'?'active':''}" data-tab="stats" aria-label="Stats">${ICON_STATS}</button>
-        <button class="header-icon-btn ${state.tab==='sommeil'?'active':''}" data-tab="sommeil" aria-label="Sommeil">${ICON_MOON}</button>
         <button class="header-icon-btn ${state.tab==='partage'?'active':''}" data-tab="partage" aria-label="Paramètres">${ICON_SETTINGS}</button>
       </div>
     </div>
@@ -1276,9 +1275,11 @@ function renderMain(){
       ${state.tab === 'profil' ? renderProfilTab() : ''}
     </div>
     <div class="tabbar">
+      ${state.role === 'edit' ? `<button class="tab-add-btn" id="fab-add-meal" aria-label="Ajouter un repas">${ICON_PLUS}</button>` : `<span class="tab-spacer"></span>`}
       <button class="tab ${state.tab==='planning'?'active':''}" data-tab="planning">${ICON_CALENDAR}<span>Planning</span></button>
-      ${state.role === 'edit' ? `<button class="tab-add-btn" id="fab-add" aria-label="${state.tab === 'sommeil' ? 'Ajouter un sommeil' : 'Ajouter un repas'}">${ICON_PLUS}</button>` : `<span class="tab-spacer"></span>`}
       <button class="tab ${state.tab==='historique'?'active':''}" data-tab="historique">${ICON_HISTORY}<span>Historique</span></button>
+      ${state.role === 'edit' ? `<button class="tab-add-btn" id="fab-add-sleep" aria-label="Ajouter une sieste">${ICON_PLUS}</button>` : `<span class="tab-spacer"></span>`}
+      <button class="tab ${state.tab==='sommeil'?'active':''}" data-tab="sommeil">${ICON_MOON}<span>Récap</span></button>
     </div>
     ${state.showModal ? renderAddModal() : ''}
   `;
@@ -2049,18 +2050,8 @@ function attachMainEvents(){
     };
   });
 
-  const fab = document.getElementById('fab-add');
-  if(fab) fab.onclick = () => {
-    if(state.tab === 'sommeil'){
-      editingSleepId = null;
-      const now = new Date();
-      modalSleepType = 'sieste';
-      modalSleepDate = localDateStr(now);
-      modalSleepDebut = now.toTimeString().slice(0,5);
-      modalSleepFin = '';
-      state.showSleepModal = true; render();
-      return;
-    }
+  const fabMeal = document.getElementById('fab-add-meal');
+  if(fabMeal) fabMeal.onclick = () => {
     editingMealId = null;
     modalAliments = [];
     const now = new Date();
@@ -2068,6 +2059,17 @@ function attachMainEvents(){
     modalDate = localDateStr(now);
     modalHeure = now.toTimeString().slice(0,5);
     state.showModal = true; render();
+  };
+
+  const fabSleep = document.getElementById('fab-add-sleep');
+  if(fabSleep) fabSleep.onclick = () => {
+    editingSleepId = null;
+    const now = new Date();
+    modalSleepType = 'sieste';
+    modalSleepDate = localDateStr(now);
+    modalSleepDebut = now.toTimeString().slice(0,5);
+    modalSleepFin = '';
+    state.showSleepModal = true; render();
   };
 
   const sleepWeekPrev = document.getElementById('sleep-week-prev');
