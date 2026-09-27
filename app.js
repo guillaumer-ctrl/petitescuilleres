@@ -10,7 +10,6 @@ const state = {
   editingField: null,
   statsExpandedCategory: null,
   knownPlannings: [],
-  showBabySwitcher: false,
   showSleepModal: false,
   sleepWeekOffset: 0,
   loading: true,
@@ -242,7 +241,7 @@ async function loadLocal(){
       if(parsed.tab && legacyRepasSubTabs[parsed.tab]){
         state.tab = 'repas';
         state.repasSubTab = legacyRepasSubTabs[parsed.tab];
-      } else if(['repas', 'sommeil', 'menu', 'partage', 'profil'].includes(parsed.tab)){
+      } else if(['repas', 'sommeil', 'bebes', 'partage', 'profil'].includes(parsed.tab)){
         state.tab = parsed.tab;
       }
     }
@@ -1297,7 +1296,7 @@ function renderSommeilContent(){
 function renderMain(){
   autoMigratePastMeals();
   const todayLabel = new Date().toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' });
-  const tabTitles = { repas: 'Repas', sommeil: 'Sommeil', menu: 'Menu', partage: 'Paramètres', profil: 'Profil de bébé' };
+  const tabTitles = { repas: 'Repas', sommeil: 'Sommeil', bebes: 'Bébés', partage: 'Paramètres', profil: 'Profil de bébé' };
   const headerPhotoStyle = planningData.photo ? `background-image:url('${escapeHtml(planningData.photo)}');background-size:cover;background-position:center;` : '';
   const ageLabel = formatBabyAge(planningData.birthdate);
 
@@ -1323,7 +1322,6 @@ function renderMain(){
       </div>
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px;flex-shrink:0;">
         <div style="font-size:12px;color:var(--primary-text);font-weight:500;white-space:nowrap;">${todayLabel}</div>
-        <button class="header-icon-btn ${state.tab==='menu' || state.tab==='partage' ? 'active' : ''}" data-tab="menu" aria-label="Menu" style="opacity:1;">${ICON_SETTINGS}</button>
       </div>
     </div>
     <div style="padding:0 1.25rem;">
@@ -1334,19 +1332,21 @@ function renderMain(){
     <div class="screen" style="padding-bottom:1rem;padding-top:0.5rem;">
       ${state.tab === 'repas' ? renderRepasContent() : ''}
       ${state.tab === 'sommeil' ? renderSommeilContent() : ''}
-      ${state.tab === 'menu' ? renderMenuTab() : ''}
+      ${state.tab === 'bebes' ? renderBebesTab() : ''}
       ${state.tab === 'partage' ? renderPartageTab() : ''}
       ${state.tab === 'profil' ? renderProfilTab() : ''}
     </div>
     <div class="tabbar">
       <button class="tab ${state.tab==='repas'?'active':''}" data-tab="repas">${ICON_SPOON}<span>Repas</span></button>
       <button class="tab ${state.tab==='sommeil'?'active':''}" data-tab="sommeil">${ICON_MOON}<span>Sommeil</span></button>
+      <button class="tab ${state.tab==='bebes'?'active':''}" data-tab="bebes">${ICON_USERS}<span>Bébés</span></button>
+      <button class="tab ${state.tab==='partage'?'active':''}" data-tab="partage">${ICON_SETTINGS}<span>Réglages</span></button>
     </div>
     ${state.showModal ? renderAddModal() : ''}
   `;
 }
 
-function renderBabySwitcherModal(){
+function renderBebesTab(){
   const rows = state.knownPlannings.map(p => {
     const isCurrent = p.planningId === state.planningId;
     const avatarStyle = p.photo ? `background-image:url('${escapeHtml(p.photo)}');background-size:cover;background-position:center;` : 'background:var(--accent-light);';
@@ -1366,16 +1366,8 @@ function renderBabySwitcherModal(){
     </div>`;
   }).join('');
   return `
-    <div class="modal-overlay" id="baby-switcher-overlay">
-      <div class="modal-sheet">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
-          <h2 style="font-size:30px;">Mes bébés</h2>
-          <button id="close-baby-switcher" class="modal-close-btn" aria-label="Fermer" style="background:none;border:none;font-size:18px;color:var(--text-secondary);">✕</button>
-        </div>
-        ${rows || `<p style="color:var(--text-muted);font-size:16px;">Aucun autre bébé accessible avec ce compte.</p>`}
-        <button class="btn btn-secondary" id="add-baby-btn" style="margin-top:1rem;">+ Ajouter un autre bébé</button>
-      </div>
-    </div>
+    ${rows || `<p style="color:var(--text-muted);font-size:16px;">Aucun autre bébé accessible avec ce compte.</p>`}
+    <button class="btn btn-secondary" id="add-baby-btn" style="margin-top:1rem;">+ Ajouter un autre bébé</button>
   `;
 }
 
@@ -1754,32 +1746,10 @@ async function loadPlanningMembersIfNeeded(){
   render();
 }
 
-function renderMenuTab(){
-  return `
-    <div class="card" id="menu-babies-btn" style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px;cursor:pointer;">
-      <div style="min-width:0;">
-        <div style="font-size:16px;font-weight:600;color:var(--text);">Bébés</div>
-        <div style="font-size:14px;color:var(--text-secondary);">Changer ou ajouter un bébé</div>
-      </div>
-      <span class="header-icon-btn" style="opacity:1;flex-shrink:0;">${ICON_USERS}</span>
-    </div>
-    <div class="card" id="menu-settings-btn" style="display:flex;justify-content:space-between;align-items:center;gap:10px;cursor:pointer;">
-      <div style="min-width:0;">
-        <div style="font-size:16px;font-weight:600;color:var(--text);">Paramètres</div>
-        <div style="font-size:14px;color:var(--text-secondary);">Compte, accès partagés, informations légales</div>
-      </div>
-      <span class="header-icon-btn" style="opacity:1;flex-shrink:0;">${ICON_SETTINGS}</span>
-    </div>
-    ${state.showBabySwitcher ? renderBabySwitcherModal() : ''}
-  `;
-}
-
 function renderPartageTab(){
   const myPseudo = (state.userProfile && state.userProfile.pseudo) || '';
   const myIdentifier = (state.userProfile && (state.userProfile.phone || state.userProfile.email)) || 'Compte connecté';
-  const backLink = `<button type="button" id="back-to-menu-btn" style="display:flex;align-items:center;gap:6px;background:none;border:none;padding:0;margin-bottom:14px;color:var(--text-secondary);font-size:15px;cursor:pointer;">${ICON_BACK} Menu</button>`;
   const pseudoSection = `
-    ${backLink}
     <div class="card" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
       <div style="min-width:0;">
         <div style="font-size:16px;color:var(--text-secondary);margin-bottom:4px;">Ton nom affiché</div>
@@ -2039,47 +2009,29 @@ function attachMainEvents(){
   });
 
 
-  const menuBabiesBtn = document.getElementById('menu-babies-btn');
-  if(menuBabiesBtn) menuBabiesBtn.onclick = () => { state.showBabySwitcher = true; render(); };
-
-  const menuSettingsBtn = document.getElementById('menu-settings-btn');
-  if(menuSettingsBtn) menuSettingsBtn.onclick = () => { state.tab = 'partage'; saveLocal(); render(); };
-
-  const backToMenuBtn = document.getElementById('back-to-menu-btn');
-  if(backToMenuBtn) backToMenuBtn.onclick = () => { state.tab = 'menu'; saveLocal(); render(); };
-
   const logoutBtn = document.getElementById('logout-btn');
   if(logoutBtn) logoutBtn.onclick = () => logOut();
 
-  const babySwitcherOverlay = document.getElementById('baby-switcher-overlay');
-  if(babySwitcherOverlay){
-    babySwitcherOverlay.onclick = (e) => { if(e.target.id === 'baby-switcher-overlay'){ state.showBabySwitcher = false; render(); } };
-    const closeBabySwitcher = document.getElementById('close-baby-switcher');
-    if(closeBabySwitcher) closeBabySwitcher.onclick = () => { state.showBabySwitcher = false; render(); };
-
-    document.querySelectorAll('[data-switchid]').forEach(btn => {
-      btn.onclick = async () => {
-        state.showBabySwitcher = false;
-        await switchPlanning(btn.dataset.switchid, btn.dataset.switchrole);
-      };
-    });
-
-    document.querySelectorAll('[data-forgetid]').forEach(btn => {
-      btn.onclick = async () => {
-        if(!(await showConfirm("Retirer l'accès à ce bébé pour ton compte ? Un administrateur devra te redonner accès si tu changes d'avis."))) return;
-        await forgetPlanning(btn.dataset.forgetid);
-      };
-    });
-
-    const addBabyBtn = document.getElementById('add-baby-btn');
-    if(addBabyBtn) addBabyBtn.onclick = () => {
-      unsubscribePlanning();
-      state.planningId = null;
-      state.role = null;
-      state.showBabySwitcher = false;
-      render();
+  document.querySelectorAll('[data-switchid]').forEach(btn => {
+    btn.onclick = async () => {
+      await switchPlanning(btn.dataset.switchid, btn.dataset.switchrole);
     };
-  }
+  });
+
+  document.querySelectorAll('[data-forgetid]').forEach(btn => {
+    btn.onclick = async () => {
+      if(!(await showConfirm("Retirer l'accès à ce bébé pour ton compte ? Un administrateur devra te redonner accès si tu changes d'avis."))) return;
+      await forgetPlanning(btn.dataset.forgetid);
+    };
+  });
+
+  const addBabyBtn = document.getElementById('add-baby-btn');
+  if(addBabyBtn) addBabyBtn.onclick = () => {
+    unsubscribePlanning();
+    state.planningId = null;
+    state.role = null;
+    render();
+  };
 
   const photoBtn = document.getElementById('photo-btn');
   const photoInput = document.getElementById('photo-input');
