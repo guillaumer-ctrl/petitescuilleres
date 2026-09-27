@@ -1,7 +1,9 @@
 const state = {
   planningId: null,
   role: null, // 'edit' | 'view'
-  tab: 'planning',
+  tab: 'repas',
+  repasSubTab: 'planning',
+  sommeilSubTab: 'recap',
   showModal: false,
   showCreate: false,
   statsExpanded: null,
@@ -233,7 +235,16 @@ async function loadLocal(){
       const parsed = JSON.parse(r.value);
       state.planningId = parsed.planningId;
       state.role = parsed.role;
-      if(parsed.tab) state.tab = parsed.tab;
+      // Anciennes valeurs stockees avant le passage aux pages Repas/Sommeil
+      // avec sous-onglets : on les retraduit pour ne pas perdre l'ecran
+      // ouvert precedemment sur un appareil deja utilise.
+      const legacyRepasSubTabs = { planning: 'planning', historique: 'historique', stats: 'stats' };
+      if(parsed.tab && legacyRepasSubTabs[parsed.tab]){
+        state.tab = 'repas';
+        state.repasSubTab = legacyRepasSubTabs[parsed.tab];
+      } else if(['repas', 'sommeil', 'partage', 'profil'].includes(parsed.tab)){
+        state.tab = parsed.tab;
+      }
     }
   }catch(e){}
   await refreshKnownPlanningsFromMemberships();
@@ -274,7 +285,8 @@ async function saveLocal(){
 async function switchPlanning(planningId, role){
   state.planningId = planningId;
   state.role = role;
-  state.tab = 'planning';
+  state.tab = 'repas';
+  state.repasSubTab = 'planning';
   await subscribeToPlanning(planningId);
   await saveLocal();
   render();
@@ -790,7 +802,8 @@ async function logOut(){
   state.role = null;
   state.knownPlannings = [];
   try{ await storageAPI.delete('my-planning', false); }catch(e){}
-  state.tab = 'planning';
+  state.tab = 'repas';
+  state.repasSubTab = 'planning';
   state.showCreate = false;
   state.needsPseudo = false;
   state.authScreen = 'landing';
@@ -1242,13 +1255,44 @@ const ICON_REACT_MITIGE = `<svg viewBox="0 0 24 24" width="20" height="20" fill=
 const ICON_REACT_ALLERGIE = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l10 18H2L12 3z"/><line x1="12" y1="10" x2="12" y2="14"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`;
 const ICON_USERS = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>`;
 const ICON_MOON = `<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M20.742 13.045a8.088 8.088 0 0 1-2.077.273c-4.535 0-8.21-3.676-8.21-8.211 0-1.276.291-2.483.812-3.559a.5.5 0 0 0-.611-.69C6.727 2.203 3.5 6.34 3.5 11.25c0 5.937 4.813 10.75 10.75 10.75 4.052 0 7.583-2.246 9.42-5.564a.5.5 0 0 0-.542-.74 8.189 8.189 0 0 1-2.386.35z"/></svg>`;
+const ICON_SPOON = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2c-2 1.5-3 3.8-3 6a3 3 0 0 0 6 0c0-2.2-1-4.5-3-6z"/><line x1="8" y1="11" x2="8" y2="22"/><path d="M16 2v9"/><path d="M13 2v5a3 3 0 0 0 3 3 3 3 0 0 0 3-3V2"/><line x1="16" y1="11" x2="16" y2="22"/></svg>`;
 const ICON_GOOGLE = `<svg viewBox="0 0 48 48" width="20" height="20"><path fill="#FFC107" d="M43.6 20.5H42V20.4H24v7.2h11.3c-1.6 4.6-6 7.9-11.3 7.9-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3.1l5.1-5.1C33.5 6.1 29 4.4 24 4.4 13.3 4.4 4.6 13.1 4.6 23.8s8.7 19.4 19.4 19.4S43.4 34.5 43.4 23.8c0-1.1-.1-2.3-.3-3.3z"/><path fill="#FF3D00" d="M6.3 14.7l5.9 4.3c1.6-4 5.5-6.8 10-6.8 3.1 0 5.9 1.2 8 3.1l5.1-5.1C33.5 6.1 29 4.4 24 4.4c-7.5 0-14 4.2-17.7 10.3z"/><path fill="#4CAF50" d="M24 43.2c4.9 0 9.4-1.9 12.8-4.9l-5.9-5c-1.9 1.4-4.3 2.2-6.9 2.2-5.3 0-9.7-3.3-11.3-7.9l-5.9 4.6c3.7 6.2 10.2 11 17.2 11z"/><path fill="#1976D2" d="M43.6 20.5H42V20.4H24v7.2h11.3c-.8 2.2-2.2 4.1-4.1 5.4l5.9 5c-.4.4 6.3-4.6 6.3-14.2 0-1.1-.1-2.3-.3-3.3z"/></svg>`;
+
+function renderSubNav(items, activeKey, groupAttr){
+  return `<div style="display:flex;gap:8px;overflow-x:auto;padding:0 1.25rem 14px;">
+    ${items.map(it => `<button type="button" class="subtab-btn ${activeKey === it.key ? 'active' : ''}" data-${groupAttr}="${it.key}">${escapeHtml(it.label)}</button>`).join('')}
+  </div>`;
+}
+
+function renderRepasContent(){
+  if(state.repasSubTab === 'ajouter' && state.role === 'edit') return renderMealAddForm();
+  if(state.repasSubTab === 'historique') return renderHistoriqueTab();
+  if(state.repasSubTab === 'stats') return renderStatsTab();
+  return renderPlanningTab();
+}
+
+function renderSommeilContent(){
+  if(state.sommeilSubTab === 'ajouter' && state.role === 'edit') return renderSleepAddForm();
+  return renderSommeilTab();
+}
 
 function renderMain(){
   autoMigratePastMeals();
   const todayLabel = new Date().toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' });
-  const tabTitles = { planning: 'Planning', historique: 'Historique', stats: 'Statistiques', sommeil: 'Sommeil', partage: 'Paramètres', profil: 'Profil de bébé' };
+  const tabTitles = { repas: 'Repas', sommeil: 'Sommeil', partage: 'Paramètres', profil: 'Profil de bébé' };
   const headerPhotoStyle = planningData.photo ? `background-image:url('${escapeHtml(planningData.photo)}');background-size:cover;background-position:center;` : '';
+
+  const repasSubItems = [
+    ...(state.role === 'edit' ? [{ key: 'ajouter', label: 'Ajouter' }] : []),
+    { key: 'planning', label: 'Planning' },
+    { key: 'historique', label: 'Historique' },
+    { key: 'stats', label: 'Stats' }
+  ];
+  const sommeilSubItems = [
+    ...(state.role === 'edit' ? [{ key: 'ajouter', label: 'Ajouter' }] : []),
+    { key: 'recap', label: 'Récap' }
+  ];
+
   return `
     <div class="top-header">
       <div style="display:flex;align-items:center;gap:12px;">
@@ -1259,27 +1303,23 @@ function renderMain(){
         </div>
       </div>
       <div style="display:flex;gap:8px;">
-        <button class="header-icon-btn ${state.tab==='stats'?'active':''}" data-tab="stats" aria-label="Stats">${ICON_STATS}</button>
         <button class="header-icon-btn ${state.tab==='partage'?'active':''}" data-tab="partage" aria-label="Paramètres">${ICON_SETTINGS}</button>
       </div>
     </div>
     <div style="padding:0 1.25rem;">
       <div class="title-font" style="font-size:30px;color:var(--text);margin-top:10px;margin-bottom:14px;text-align:center;">${tabTitles[state.tab]}</div>
     </div>
+    ${state.tab === 'repas' ? renderSubNav(repasSubItems, state.repasSubTab, 'repassub') : ''}
+    ${state.tab === 'sommeil' ? renderSubNav(sommeilSubItems, state.sommeilSubTab, 'sommeilsub') : ''}
     <div class="screen" style="padding-bottom:1rem;padding-top:0.5rem;">
-      ${state.tab === 'planning' ? renderPlanningTab() : ''}
-      ${state.tab === 'historique' ? renderHistoriqueTab() : ''}
-      ${state.tab === 'stats' ? renderStatsTab() : ''}
-      ${state.tab === 'sommeil' ? renderSommeilTab() : ''}
+      ${state.tab === 'repas' ? renderRepasContent() : ''}
+      ${state.tab === 'sommeil' ? renderSommeilContent() : ''}
       ${state.tab === 'partage' ? renderPartageTab() : ''}
       ${state.tab === 'profil' ? renderProfilTab() : ''}
     </div>
     <div class="tabbar">
-      ${state.role === 'edit' ? `<button class="tab-add-btn" id="fab-add-meal" aria-label="Ajouter un repas">${ICON_PLUS}</button>` : `<span class="tab-spacer"></span>`}
-      <button class="tab ${state.tab==='planning'?'active':''}" data-tab="planning">${ICON_CALENDAR}<span>Planning</span></button>
-      <button class="tab ${state.tab==='historique'?'active':''}" data-tab="historique">${ICON_HISTORY}<span>Historique</span></button>
-      ${state.role === 'edit' ? `<button class="tab-add-btn" id="fab-add-sleep" aria-label="Ajouter une sieste">${ICON_PLUS}</button>` : `<span class="tab-spacer"></span>`}
-      <button class="tab ${state.tab==='sommeil'?'active':''}" data-tab="sommeil">${ICON_MOON}<span>Récap</span></button>
+      <button class="tab ${state.tab==='repas'?'active':''}" data-tab="repas">${ICON_SPOON}<span>Repas</span></button>
+      <button class="tab ${state.tab==='sommeil'?'active':''}" data-tab="sommeil">${ICON_MOON}<span>Sommeil</span></button>
     </div>
     ${state.showModal ? renderAddModal() : ''}
   `;
@@ -1321,7 +1361,7 @@ function renderBabySwitcherModal(){
 function renderPlanningTab(){
   const futurs = planningData.meals.filter(m => m.statut === 'futur').sort((a,b)=> (a.date+a.heure).localeCompare(b.date+b.heure));
   if(futurs.length === 0){
-    const hint = state.role === 'edit' ? " Touche le bouton + ci-dessous pour en ajouter un." : '';
+    const hint = state.role === 'edit' ? " Touche l'onglet Ajouter ci-dessus pour en ajouter un." : '';
     return `<p style="text-align:center;color:var(--text-muted);font-size:16px;margin-top:2rem;">Aucun repas planifié pour l'instant.${hint}</p>`;
   }
   return futurs.map(m => {
@@ -1613,20 +1653,13 @@ function renderSommeilTab(){
         <div style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-secondary);"><span style="width:12px;height:12px;border-radius:4px;background:var(--primary);display:inline-block;"></span>Nuit</div>
       </div>
     </div>
-    ${state.role === 'edit' ? `<p style="text-align:center;color:var(--text-muted);font-size:14px;">Touche une barre pour la modifier, ou le bouton + pour ajouter un sommeil.</p>` : ''}
+    ${state.role === 'edit' ? `<p style="text-align:center;color:var(--text-muted);font-size:14px;">Touche une barre pour la modifier, ou l'onglet Ajouter pour enregistrer un sommeil.</p>` : ''}
     ${state.showSleepModal ? renderSleepModal() : ''}
   `;
 }
 
-function renderSleepModal(){
-  const isEditing = !!editingSleepId;
+function renderSleepFormFields(){
   return `
-    <div class="modal-overlay" id="sleep-modal-overlay">
-      <div class="modal-sheet" id="sleep-modal-sheet">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
-          <h2 style="font-size:30px;">${isEditing ? 'Modifier le sommeil' : 'Ajouter un sommeil'}</h2>
-          <button id="close-sleep-modal" class="modal-close-btn" aria-label="Fermer" style="background:none;border:none;font-size:18px;color:var(--text-secondary);">✕</button>
-        </div>
         <div class="field">
           <label>Type</label>
           <div style="display:flex;gap:8px;">
@@ -1650,11 +1683,35 @@ function renderSleepModal(){
           </div>
         </div>
         <p style="font-size:14px;color:var(--text-muted);margin:-6px 0 1rem;">Laisse le réveil vide si bébé dort encore.</p>
+  `;
+}
+
+// Modale d'edition d'un sommeil existant (ouverte en touchant une barre
+// dans le Recap). L'ajout se fait sur la page dediee (onglet Sommeil >
+// Ajouter), cf. renderSleepAddForm.
+function renderSleepModal(){
+  return `
+    <div class="modal-overlay" id="sleep-modal-overlay">
+      <div class="modal-sheet" id="sleep-modal-sheet">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
+          <h2 style="font-size:30px;">Modifier le sommeil</h2>
+          <button id="close-sleep-modal" class="modal-close-btn" aria-label="Fermer" style="background:none;border:none;font-size:18px;color:var(--text-secondary);">✕</button>
+        </div>
+        ${renderSleepFormFields()}
         <div style="display:flex;gap:10px;margin-top:0.5rem;">
           <button class="btn btn-primary" id="save-sleep" style="margin:0;width:auto;flex:1;">Enregistrer</button>
-          ${isEditing ? `<button id="delete-sleep" aria-label="Supprimer ce sommeil" style="width:50px;height:50px;flex-shrink:0;border-radius:50px;border:1.5px solid var(--border);background:var(--card);color:var(--danger-text);display:flex;align-items:center;justify-content:center;">${ICON_TRASH}</button>` : ''}
+          <button id="delete-sleep" aria-label="Supprimer ce sommeil" style="width:50px;height:50px;flex-shrink:0;border-radius:50px;border:1.5px solid var(--border);background:var(--card);color:var(--danger-text);display:flex;align-items:center;justify-content:center;">${ICON_TRASH}</button>
         </div>
       </div>
+    </div>
+  `;
+}
+
+function renderSleepAddForm(){
+  return `
+    <div class="card">
+      ${renderSleepFormFields()}
+      <button class="btn btn-primary" id="save-sleep" style="margin-top:0.25rem;">Enregistrer</button>
     </div>
   `;
 }
@@ -1764,15 +1821,8 @@ function renderPseudoEditModal(){
   `;
 }
 
-function renderAddModal(){
-  const isEditing = !!editingMealId;
+function renderMealFormFields(){
   return `
-    <div class="modal-overlay" id="modal-overlay">
-      <div class="modal-sheet" id="modal-sheet">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
-          <h2 style="font-size:30px;">${isEditing ? 'Modifier le repas' : 'Ajouter un repas'}</h2>
-          <button id="close-modal" class="modal-close-btn" aria-label="Fermer" style="background:none;border:none;font-size:18px;color:var(--text-secondary);">✕</button>
-        </div>
         <div class="field">
           <label>Moment du repas</label>
           <select id="moment-input">
@@ -1823,11 +1873,35 @@ function renderAddModal(){
           </div>
           <p class="error-text" id="aliments-error" style="display:none;">Ajoute au moins un aliment</p>
         </div>
+  `;
+}
+
+// Modale d'edition d'un repas existant (ouverte via "Modifier" depuis
+// Planning/Historique). L'ajout d'un nouveau repas se fait desormais sur
+// la page dediee (onglet Repas > Ajouter), cf. renderMealAddForm.
+function renderAddModal(){
+  return `
+    <div class="modal-overlay" id="modal-overlay">
+      <div class="modal-sheet" id="modal-sheet">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
+          <h2 style="font-size:30px;">Modifier le repas</h2>
+          <button id="close-modal" class="modal-close-btn" aria-label="Fermer" style="background:none;border:none;font-size:18px;color:var(--text-secondary);">✕</button>
+        </div>
+        ${renderMealFormFields()}
         <div style="display:flex;gap:10px;margin-top:0.5rem;">
           <button class="btn btn-primary" id="save-meal" style="margin:0;width:auto;flex:1;">Enregistrer le repas</button>
-          ${isEditing ? `<button id="delete-meal" aria-label="Supprimer ce repas" style="width:50px;height:50px;flex-shrink:0;border-radius:50px;border:1.5px solid var(--border);background:var(--card);color:var(--danger-text);display:flex;align-items:center;justify-content:center;">${ICON_TRASH}</button>` : ''}
+          <button id="delete-meal" aria-label="Supprimer ce repas" style="width:50px;height:50px;flex-shrink:0;border-radius:50px;border:1.5px solid var(--border);background:var(--card);color:var(--danger-text);display:flex;align-items:center;justify-content:center;">${ICON_TRASH}</button>
         </div>
       </div>
+    </div>
+  `;
+}
+
+function renderMealAddForm(){
+  return `
+    <div class="card">
+      ${renderMealFormFields()}
+      <button class="btn btn-primary" id="save-meal" style="margin-top:0.25rem;">Enregistrer le repas</button>
     </div>
   `;
 }
@@ -2050,27 +2124,37 @@ function attachMainEvents(){
     };
   });
 
-  const fabMeal = document.getElementById('fab-add-meal');
-  if(fabMeal) fabMeal.onclick = () => {
-    editingMealId = null;
-    modalAliments = [];
-    const now = new Date();
-    modalMoment = 'Petit-déjeuner';
-    modalDate = localDateStr(now);
-    modalHeure = now.toTimeString().slice(0,5);
-    state.showModal = true; render();
-  };
+  document.querySelectorAll('[data-repassub]').forEach(btn => {
+    btn.onclick = () => {
+      const key = btn.dataset.repassub;
+      if(key === 'ajouter'){
+        editingMealId = null;
+        modalAliments = [];
+        const now = new Date();
+        modalMoment = 'Petit-déjeuner';
+        modalDate = localDateStr(now);
+        modalHeure = now.toTimeString().slice(0,5);
+      }
+      state.repasSubTab = key;
+      render();
+    };
+  });
 
-  const fabSleep = document.getElementById('fab-add-sleep');
-  if(fabSleep) fabSleep.onclick = () => {
-    editingSleepId = null;
-    const now = new Date();
-    modalSleepType = 'sieste';
-    modalSleepDate = localDateStr(now);
-    modalSleepDebut = now.toTimeString().slice(0,5);
-    modalSleepFin = '';
-    state.showSleepModal = true; render();
-  };
+  document.querySelectorAll('[data-sommeilsub]').forEach(btn => {
+    btn.onclick = () => {
+      const key = btn.dataset.sommeilsub;
+      if(key === 'ajouter'){
+        editingSleepId = null;
+        const now = new Date();
+        modalSleepType = 'sieste';
+        modalSleepDate = localDateStr(now);
+        modalSleepDebut = now.toTimeString().slice(0,5);
+        modalSleepFin = '';
+      }
+      state.sommeilSubTab = key;
+      render();
+    };
+  });
 
   const sleepWeekPrev = document.getElementById('sleep-week-prev');
   if(sleepWeekPrev) sleepWeekPrev.onclick = () => { state.sleepWeekOffset = (state.sleepWeekOffset || 0) - 1; render(); };
@@ -2091,10 +2175,17 @@ function attachMainEvents(){
     };
   });
 
-  const sleepOverlay = document.getElementById('sleep-modal-overlay');
-  if(sleepOverlay){
-    sleepOverlay.onclick = (e) => { if(e.target.id === 'sleep-modal-overlay'){ state.showSleepModal = false; editingSleepId = null; render(); } };
-    document.getElementById('close-sleep-modal').onclick = () => { state.showSleepModal = false; editingSleepId = null; render(); };
+  // Comme pour le repas : les champs sommeil existent soit dans la modale
+  // d'edition (#sleep-modal-overlay), soit inline dans l'onglet Sommeil >
+  // Ajouter. #sleep-type-sieste est present dans les deux cas.
+  const sleepFormActive = document.getElementById('sleep-type-sieste');
+  if(sleepFormActive){
+    const sleepOverlay = document.getElementById('sleep-modal-overlay');
+    if(sleepOverlay){
+      sleepOverlay.onclick = (e) => { if(e.target.id === 'sleep-modal-overlay'){ state.showSleepModal = false; editingSleepId = null; render(); } };
+      const closeSleepModalBtn = document.getElementById('close-sleep-modal');
+      if(closeSleepModalBtn) closeSleepModalBtn.onclick = () => { state.showSleepModal = false; editingSleepId = null; render(); };
+    }
 
     document.getElementById('sleep-type-sieste').onclick = () => { modalSleepType = 'sieste'; render(); };
     document.getElementById('sleep-type-nuit').onclick = () => { modalSleepType = 'nuit'; render(); };
@@ -2128,6 +2219,7 @@ function attachMainEvents(){
 
       const fields = { type: modalSleepType, date, debut, fin };
       let sleep;
+      const isNewSleep = !editingSleepId;
       if(editingSleepId){
         sleep = (planningData.sleeps || []).find(s => s.id === editingSleepId);
         if(sleep) Object.assign(sleep, fields);
@@ -2139,6 +2231,10 @@ function attachMainEvents(){
       await saveSleep(sleep);
       state.showSleepModal = false;
       editingSleepId = null;
+      if(isNewSleep){
+        state.tab = 'sommeil';
+        state.sommeilSubTab = 'recap';
+      }
       await saveLocal();
       render();
     };
@@ -2228,10 +2324,19 @@ function attachMainEvents(){
     };
   });
 
-  const overlay = document.getElementById('modal-overlay');
-  if(overlay){
-    overlay.onclick = (e) => { if(e.target.id === 'modal-overlay'){ state.showModal = false; editingMealId = null; render(); } };
-    document.getElementById('close-modal').onclick = () => { state.showModal = false; editingMealId = null; render(); };
+  // Les champs du formulaire repas existent soit dans la modale d'edition
+  // (#modal-overlay), soit inline dans l'onglet Repas > Ajouter : dans les
+  // deux cas #moment-input est present, donc c'est lui qui sert de garde ;
+  // les bouts specifiques a la modale (fermeture) restent sous leur propre
+  // garde plus bas.
+  const mealFormActive = document.getElementById('moment-input');
+  if(mealFormActive){
+    const overlay = document.getElementById('modal-overlay');
+    if(overlay){
+      overlay.onclick = (e) => { if(e.target.id === 'modal-overlay'){ state.showModal = false; editingMealId = null; render(); } };
+      const closeModalBtn = document.getElementById('close-modal');
+      if(closeModalBtn) closeModalBtn.onclick = () => { state.showModal = false; editingMealId = null; render(); };
+    }
 
     const HEURE_PAR_MOMENT = { 'Petit-déjeuner': '08:00', 'Déjeuner': '12:00', 'Goûter': '16:30', 'Dîner': '19:00' };
     const momentInput = document.getElementById('moment-input');
@@ -2381,7 +2486,8 @@ function attachMainEvents(){
       // allergie, un moment qu'on ne veut pas interrompre par une pub).
       if(isNewMeal && window.__showInterstitialAd) window.__showInterstitialAd();
       state.showModal = false;
-      state.tab = statutAuto === 'passe' ? 'historique' : 'planning';
+      state.tab = 'repas';
+      state.repasSubTab = statutAuto === 'passe' ? 'historique' : 'planning';
       editingMealId = null;
       await saveLocal();
       render();
