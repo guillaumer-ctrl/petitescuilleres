@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "petites-cuilleres-static",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "http.server", "8811"],
+      "port": 8811
+    }
+  ]
+}

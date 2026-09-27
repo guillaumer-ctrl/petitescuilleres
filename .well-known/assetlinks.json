@@ -1,0 +1,8 @@
+   [{
+     "relation": ["delegate_permission/common.handle_all_urls"],
+     "target": {
+       "namespace": "android_app",
+       "package_name": "app.petitescuilleres.twa",
+       "sha256_cert_fingerprints": ["8B:C4:AE:1D:6F:B7:B6:F2:AA:F2:37:A4:30:72:A8:47:3C:7F:A8:3A:76:70:C1:EA:46:ED:97:17:6D:B9:F7:8F"]
+     }
+   }]
