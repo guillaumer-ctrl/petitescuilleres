@@ -131,6 +131,8 @@ label{ color:var(--text-secondary); display:block; margin-bottom:6px; }
   font-size:14px; font-weight:600; cursor:pointer; white-space:nowrap;
 }
 .subtab-btn.active{ background:var(--primary); border-color:var(--primary); color:#fff; }
+.subtab-btn.subtab-highlight{ background:var(--accent); border-color:var(--accent); color:var(--primary); }
+.subtab-btn.subtab-highlight.active{ background:var(--accent); border-color:var(--primary); color:var(--primary); }
 
 .header-icon-btn{
   width:32px; height:32px; background:none; color:var(--primary);

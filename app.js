@@ -25,7 +25,9 @@ const state = {
   grantSuccessMessage: null,
   grantBusy: false,
   authError: null,
-  authBusy: false
+  authBusy: false,
+  editingMemberUid: null,
+  editMemberError: null
 };
 
 function localDateStr(d){
@@ -681,6 +683,28 @@ async function revokeAccess(planningId, uid){
   }catch(e){ console.error('Erreur retrait accès', e); return false; }
 }
 
+// Renomme un membre tel qu'il apparait dans ce planning (n'affecte que ce
+// planning : si la personne modifie ensuite son propre nom affiché, il
+// reprendra le dessus la prochaine fois qu'elle se connecte).
+async function updateMemberPseudo(planningId, uid, pseudo){
+  try{
+    await db.collection('planningMembers').doc(planningId).collection('members').doc(uid).set({ pseudo }, { merge: true });
+    return true;
+  }catch(e){ console.error('Erreur renommage du membre', e); return false; }
+}
+
+async function updateMemberRole(planningId, uid, role){
+  try{
+    await db.collection('memberships').doc(uid).collection('plannings').doc(planningId).set({
+      role, planningId, updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+    await db.collection('planningMembers').doc(planningId).collection('members').doc(uid).set({
+      role, updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+    return true;
+  }catch(e){ console.error('Erreur changement de rôle', e); return false; }
+}
+
 async function listPlanningMembers(planningId){
   try{
     const snap = await db.collection('planningMembers').doc(planningId).collection('members').get();
@@ -1277,7 +1301,7 @@ const ICON_GOOGLE = `<svg viewBox="0 0 48 48" width="20" height="20"><path fill=
 
 function renderSubNav(items, activeKey, groupAttr){
   return `<div style="display:flex;gap:8px;overflow-x:auto;padding:0 1.25rem 14px;">
-    ${items.map(it => `<button type="button" class="subtab-btn ${activeKey === it.key ? 'active' : ''}" data-${groupAttr}="${it.key}">${escapeHtml(it.label)}</button>`).join('')}
+    ${items.map(it => `<button type="button" class="subtab-btn ${it.key === 'ajouter' ? 'subtab-highlight' : ''} ${activeKey === it.key ? 'active' : ''}" data-${groupAttr}="${it.key}">${escapeHtml(it.label)}</button>`).join('')}
   </div>`;
 }
 
@@ -1737,6 +1761,8 @@ let modalSleepFin = '';
 
 let planningMembers = [];
 let planningMembersForId = null;
+let editMemberPseudo = '';
+let editMemberRole = 'view';
 
 async function loadPlanningMembersIfNeeded(){
   if(state.tab !== 'partage' || !state.planningId || state.role !== 'edit') return;
@@ -1779,7 +1805,12 @@ function renderPartageTab(){
             <div style="font-weight:600;font-size:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(m.pseudo || m.identifier) || 'Compte'}${m.uid === myUid ? ' (toi)' : ''}</div>
             <div style="font-size:14px;color:var(--text-secondary);">${m.role === 'edit' ? 'Administrateur' : 'Lecture seule'}</div>
           </div>
-          ${m.uid !== myUid ? `<button class="header-icon-btn" data-revokeuid="${m.uid}" aria-label="Retirer l'accès" style="opacity:0.7;flex-shrink:0;">${ICON_TRASH}</button>` : ''}
+          ${m.uid !== myUid ? `
+            <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;">
+              <button class="edit-field-btn" data-editmemberuid="${m.uid}" aria-label="Modifier ce membre">${ICON_EDIT}</button>
+              <button class="header-icon-btn" data-revokeuid="${m.uid}" aria-label="Retirer l'accès" style="opacity:0.7;">${ICON_TRASH}</button>
+            </div>
+          ` : ''}
         </div>
       `).join('') : `<p style="color:var(--text-muted);font-size:15px;">Personne d'autre pour l'instant.</p>`)
     : `<p style="color:var(--text-muted);font-size:15px;">Chargement...</p>`;
@@ -1803,7 +1834,37 @@ function renderPartageTab(){
 
     <label style="display:block;margin:1.5rem 0 10px;">Personnes ayant accès</label>
     ${membersHtml}
+    ${state.editingMemberUid ? renderMemberEditModal() : ''}
   ` + legalLinks;
+}
+
+function renderMemberEditModal(){
+  const member = planningMembers.find(m => m.uid === state.editingMemberUid);
+  if(!member) return '';
+  return `
+    <div class="modal-overlay" id="member-edit-overlay">
+      <div class="modal-sheet">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
+          <h2 style="font-size:30px;">Modifier ce membre</h2>
+          <button id="close-member-edit" class="modal-close-btn" aria-label="Fermer" style="background:none;border:none;font-size:18px;color:var(--text-secondary);">✕</button>
+        </div>
+        <div class="field">
+          <label>Nom affiché</label>
+          <input type="text" id="edit-member-pseudo-input" value="${escapeHtml(editMemberPseudo)}" placeholder="Ex : Maman, Léo, Mamie..." />
+          <p class="error-text" id="edit-member-pseudo-error" style="display:none;">Indique un nom</p>
+        </div>
+        <div class="field">
+          <label>Rôle</label>
+          <div style="display:flex;gap:8px;">
+            <button type="button" class="btn ${editMemberRole === 'edit' ? 'btn-primary' : 'btn-secondary'}" id="edit-member-role-edit" style="height:44px;font-size:15px;">Administrateur</button>
+            <button type="button" class="btn ${editMemberRole === 'view' ? 'btn-primary' : 'btn-secondary'}" id="edit-member-role-view" style="height:44px;font-size:15px;">Lecture seule</button>
+          </div>
+        </div>
+        ${state.editMemberError ? `<p class="error-text" style="margin-bottom:10px;">${state.editMemberError}</p>` : ''}
+        <button class="btn btn-primary" id="save-member-edit-btn" style="margin-top:0.5rem;">Enregistrer</button>
+      </div>
+    </div>
+  `;
 }
 
 function renderPseudoEditModal(){
@@ -2289,6 +2350,63 @@ function attachMainEvents(){
       await loadPlanningMembersIfNeeded();
     };
   });
+
+  document.querySelectorAll('[data-editmemberuid]').forEach(btn => {
+    btn.onclick = () => {
+      const member = planningMembers.find(m => m.uid === btn.dataset.editmemberuid);
+      if(!member) return;
+      state.editingMemberUid = member.uid;
+      editMemberPseudo = member.pseudo || '';
+      editMemberRole = member.role || 'view';
+      state.editMemberError = null;
+      render();
+    };
+  });
+
+  const memberEditOverlay = document.getElementById('member-edit-overlay');
+  if(memberEditOverlay){
+    memberEditOverlay.onclick = (e) => { if(e.target.id === 'member-edit-overlay'){ state.editingMemberUid = null; render(); } };
+    const closeMemberEdit = document.getElementById('close-member-edit');
+    if(closeMemberEdit) closeMemberEdit.onclick = () => { state.editingMemberUid = null; render(); };
+
+    const pseudoInput = document.getElementById('edit-member-pseudo-input');
+    if(pseudoInput) pseudoInput.oninput = () => { editMemberPseudo = pseudoInput.value; };
+
+    document.getElementById('edit-member-role-edit').onclick = () => { editMemberRole = 'edit'; render(); };
+    document.getElementById('edit-member-role-view').onclick = () => { editMemberRole = 'view'; render(); };
+
+    document.getElementById('save-member-edit-btn').onclick = async () => {
+      const uid = state.editingMemberUid;
+      const member = planningMembers.find(m => m.uid === uid);
+      if(!member) return;
+      const val = editMemberPseudo.trim();
+      document.getElementById('edit-member-pseudo-error').style.display = val ? 'none' : 'block';
+      if(!val) return;
+
+      if(editMemberRole === 'view' && member.role === 'edit'){
+        const alone = await isOnlyAdmin(state.planningId, uid);
+        if(alone){
+          state.editMemberError = "Impossible : c'est actuellement le seul administrateur de ce planning. Donne d'abord l'accès Administrateur à quelqu'un d'autre.";
+          render();
+          return;
+        }
+      }
+
+      if(val !== (member.pseudo || '')){
+        await updateMemberPseudo(state.planningId, uid, val);
+      }
+      if(editMemberRole !== member.role){
+        const ok = await updateMemberRole(state.planningId, uid, editMemberRole);
+        if(!ok){ state.editMemberError = "Le changement de rôle a échoué, réessaie."; render(); return; }
+      }
+
+      state.editingMemberUid = null;
+      state.editMemberError = null;
+      planningMembersForId = null;
+      render();
+      await loadPlanningMembersIfNeeded();
+    };
+  }
 
   document.querySelectorAll('[data-react]').forEach(btn => {
     btn.onclick = async () => {
