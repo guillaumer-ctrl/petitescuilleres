@@ -467,6 +467,14 @@ function subscribeToPlanning(planningId){
   });
 }
 
+// Erreur reseau/serveur passagere : Firestore garde l'ecriture en file
+// et la resynchronise tout seul une fois la connexion revenue (contrairement
+// a "permission-denied", qui est definitif). Inutile d'alarmer l'utilisateur
+// avec "droits insuffisants" dans ce cas.
+function isTransientFirestoreError(e){
+  return !!e && ['unavailable','deadline-exceeded','cancelled','aborted','resource-exhausted','internal'].includes(e.code);
+}
+
 async function savePlanningProfile(fields){
   try{
     await db.collection(COLLECTION).doc('data:' + state.planningId).set(fields, { merge: true });
@@ -474,7 +482,7 @@ async function savePlanningProfile(fields){
     return true;
   }catch(e){
     console.error('Erreur sauvegarde profil', e);
-    await showAlert("Cette modification n'a pas pu être enregistrée (droits insuffisants ou connexion coupée).");
+    if(!isTransientFirestoreError(e)) await showAlert("Cette modification n'a pas pu être enregistrée (droits insuffisants ou connexion coupée).");
     return false;
   }
 }
@@ -486,7 +494,7 @@ async function saveMeal(meal){
     return true;
   }catch(e){
     console.error('Erreur sauvegarde repas', e);
-    await showAlert("Ce repas n'a pas pu être enregistré (droits insuffisants ou connexion coupée).");
+    if(!isTransientFirestoreError(e)) await showAlert("Ce repas n'a pas pu être enregistré (droits insuffisants ou connexion coupée).");
     return false;
   }
 }
@@ -497,7 +505,7 @@ async function deleteMeal(mealId){
     return true;
   }catch(e){
     console.error('Erreur suppression repas', e);
-    await showAlert("Ce repas n'a pas pu être supprimé (droits insuffisants ou connexion coupée).");
+    if(!isTransientFirestoreError(e)) await showAlert("Ce repas n'a pas pu être supprimé (droits insuffisants ou connexion coupée).");
     return false;
   }
 }
@@ -509,7 +517,7 @@ async function saveSleep(sleep){
     return true;
   }catch(e){
     console.error('Erreur sauvegarde sommeil', e);
-    await showAlert("Cet enregistrement de sommeil n'a pas pu être enregistré (droits insuffisants ou connexion coupée).");
+    if(!isTransientFirestoreError(e)) await showAlert("Cet enregistrement de sommeil n'a pas pu être enregistré (droits insuffisants ou connexion coupée).");
     return false;
   }
 }
@@ -520,7 +528,7 @@ async function deleteSleep(sleepId){
     return true;
   }catch(e){
     console.error('Erreur suppression sommeil', e);
-    await showAlert("Cet enregistrement de sommeil n'a pas pu être supprimé (droits insuffisants ou connexion coupée).");
+    if(!isTransientFirestoreError(e)) await showAlert("Cet enregistrement de sommeil n'a pas pu être supprimé (droits insuffisants ou connexion coupée).");
     return false;
   }
 }
@@ -538,7 +546,7 @@ async function saveMealsReactions(mealIds){
     return true;
   }catch(e){
     console.error('Erreur sauvegarde réaction', e);
-    await showAlert("Cette réaction n'a pas pu être enregistrée (droits insuffisants ou connexion coupée).");
+    if(!isTransientFirestoreError(e)) await showAlert("Cette réaction n'a pas pu être enregistrée (droits insuffisants ou connexion coupée).");
     return false;
   }
 }
